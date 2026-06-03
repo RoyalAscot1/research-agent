@@ -10,15 +10,15 @@ frontend/  Next.js 16 (TypeScript)
 ```
 
 ## Current state
-- Branch `skeleton` merged to `main`
 - Backend: FastAPI skeleton with all 7 stub endpoints, async SQLAlchemy models, Alembic configured
 - Frontend: Next.js 16, Tailwind, shadcn/ui, Prisma v7, stub pages for `/`, `/history`, `/chat/[id]`
-- No features built yet — next step is Postgres schema + Alembic migrations (step 1 of build order)
+- Database: Neon Postgres live — all 7 tables created (Alembic owns app tables, Prisma owns auth tables)
+- Next step: NextAuth + Prisma auth flow end to end (step 3 of build order)
 
 ## Build order (from app_summary.md)
-1. Postgres schema + Alembic migrations ← next
+1. Postgres schema + Alembic migrations (done)
 2. FastAPI skeleton (done)
-3. NextAuth + Prisma — auth flow end to end
+3. NextAuth + Prisma — auth flow end to end ← next
 4. LangGraph graph — single node (Gemini only)
 5. Add Tavily researcher node
 6. Add PRAW + VADER sentiment node
@@ -49,6 +49,7 @@ frontend/  Next.js 16 (TypeScript)
 - Alembic owns ALL migrations — Prisma must not manage schema changes
 - `users` table is excluded from autogenerate (owned by Prisma/NextAuth) — see `include_object` in `backend/alembic/env.py`
 - Load `.env` before running Alembic: `export $(grep -v '^#' .env | xargs) && alembic <command>`
+- Neon gives a `postgresql://` URL — change to `postgresql+asyncpg://` and replace `sslmode=require` with `ssl=require` for backend use
 
 ### Backend
 - Run from `backend/` with venv active: `source .venv/bin/activate`

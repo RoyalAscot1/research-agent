@@ -1,6 +1,3 @@
-// Schema changes go through Alembic (Python side).
-// After each Alembic migration run `prisma db pull` or manually mirror the changes, then `prisma generate`.
-
 generator client {
   provider = "prisma-client"
   output   = "../lib/generated/prisma"
@@ -10,22 +7,21 @@ datasource db {
   provider = "postgresql"
 }
 
-// ── NextAuth / Auth.js required models ────────────────────────────────────────
-
 model User {
-  id             String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  id             String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   name           String?
-  email          String?   @unique
+  email          String?         @unique
   emailVerified  DateTime?
   image          String?
   hashedPassword String?
-  createdAt      DateTime  @default(now())
+  createdAt      DateTime        @default(now())
+  accounts       Account[]
+  follow_ups     follow_ups[]
+  reports        reports[]
+  research_jobs  research_jobs[]
+  sessions       Session[]
 
-  accounts     Account[]
-  sessions     Session[]
-  researchJobs ResearchJob[]
-  reports      Report[]
-  followUps    FollowUp[]
+  @@map("users")
 }
 
 model Account {
@@ -34,17 +30,17 @@ model Account {
   type              String
   provider          String
   providerAccountId String
-  refresh_token     String? @db.Text
-  access_token      String? @db.Text
+  refresh_token     String?
+  access_token      String?
   expires_at        Int?
   token_type        String?
   scope             String?
-  id_token          String? @db.Text
+  id_token          String?
   session_state     String?
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user              User    @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([provider, providerAccountId])
+  @@map("accounts")
 }
 
 model Session {
@@ -52,8 +48,9 @@ model Session {
   sessionToken String   @unique
   userId       String   @db.Uuid
   expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@map("sessions")
 }
 
 model VerificationToken {
@@ -62,64 +59,64 @@ model VerificationToken {
   expires    DateTime
 
   @@unique([identifier, token])
+  @@map("verification_tokens")
 }
 
-// ── App models ─────────────────────────────────────────────────────────────────
+model alembic_version {
+  version_num String @id(map: "alembic_version_pkc") @db.VarChar(32)
+}
 
-enum JobStatus {
+model follow_ups {
+  id          String    @id @db.Uuid
+  report_id   String    @db.Uuid
+  user_id     String    @db.Uuid
+  question    String
+  answer      String?
+  turn_number Int
+  created_at  DateTime? @db.Timestamptz(6)
+  reports     reports   @relation(fields: [report_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users       User      @relation(fields: [user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+model reports {
+  id                  String           @id @db.Uuid
+  job_id              String           @db.Uuid
+  user_id             String           @db.Uuid
+  report_markdown     String?
+  raw_context         Json?
+  suggested_followups Json?
+  sentiment_positive  Float?
+  sentiment_neutral   Float?
+  sentiment_negative  Float?
+  reddit_volume       Int?
+  source_count        Int?
+  overall_sentiment   sentiment_label?
+  created_at          DateTime?        @db.Timestamptz(6)
+  follow_ups          follow_ups[]
+  research_jobs       research_jobs    @relation(fields: [job_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users               User             @relation(fields: [user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+model research_jobs {
+  id           String     @id @db.Uuid
+  user_id      String     @db.Uuid
+  query        String
+  status       job_status
+  created_at   DateTime?  @db.Timestamptz(6)
+  completed_at DateTime?  @db.Timestamptz(6)
+  reports      reports[]
+  users        User       @relation(fields: [user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+enum job_status {
   pending
   running
   done
   failed
 }
 
-enum SentimentLabel {
+enum sentiment_label {
   Positive
   Mixed
   Negative
-}
-
-model ResearchJob {
-  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  userId      String    @db.Uuid
-  query       String
-  status      JobStatus @default(pending)
-  createdAt   DateTime  @default(now())
-  completedAt DateTime?
-
-  user   User    @relation(fields: [userId], references: [id])
-  report Report?
-}
-
-model Report {
-  id                 String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  jobId              String          @unique @db.Uuid
-  userId             String          @db.Uuid
-  reportMarkdown     String?
-  rawContext         Json?
-  suggestedFollowups Json?
-  sentimentPositive  Float?
-  sentimentNeutral   Float?
-  sentimentNegative  Float?
-  redditVolume       Int?
-  sourceCount        Int?
-  overallSentiment   SentimentLabel?
-  createdAt          DateTime        @default(now())
-
-  job       ResearchJob @relation(fields: [jobId], references: [id])
-  user      User        @relation(fields: [userId], references: [id])
-  followUps FollowUp[]
-}
-
-model FollowUp {
-  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  reportId   String   @db.Uuid
-  userId     String   @db.Uuid
-  question   String
-  answer     String?
-  turnNumber Int
-  createdAt  DateTime @default(now())
-
-  report Report @relation(fields: [reportId], references: [id])
-  user   User   @relation(fields: [userId], references: [id])
 }
