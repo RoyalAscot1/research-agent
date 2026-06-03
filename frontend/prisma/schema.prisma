@@ -1,0 +1,125 @@
+// Schema changes go through Alembic (Python side).
+// After each Alembic migration run `prisma db pull` or manually mirror the changes, then `prisma generate`.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../lib/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ── NextAuth / Auth.js required models ────────────────────────────────────────
+
+model User {
+  id             String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name           String?
+  email          String?   @unique
+  emailVerified  DateTime?
+  image          String?
+  hashedPassword String?
+  createdAt      DateTime  @default(now())
+
+  accounts     Account[]
+  sessions     Session[]
+  researchJobs ResearchJob[]
+  reports      Report[]
+  followUps    FollowUp[]
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String  @db.Uuid
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String   @db.Uuid
+  expires      DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+// ── App models ─────────────────────────────────────────────────────────────────
+
+enum JobStatus {
+  pending
+  running
+  done
+  failed
+}
+
+enum SentimentLabel {
+  Positive
+  Mixed
+  Negative
+}
+
+model ResearchJob {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId      String    @db.Uuid
+  query       String
+  status      JobStatus @default(pending)
+  createdAt   DateTime  @default(now())
+  completedAt DateTime?
+
+  user   User    @relation(fields: [userId], references: [id])
+  report Report?
+}
+
+model Report {
+  id                 String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  jobId              String          @unique @db.Uuid
+  userId             String          @db.Uuid
+  reportMarkdown     String?
+  rawContext         Json?
+  suggestedFollowups Json?
+  sentimentPositive  Float?
+  sentimentNeutral   Float?
+  sentimentNegative  Float?
+  redditVolume       Int?
+  sourceCount        Int?
+  overallSentiment   SentimentLabel?
+  createdAt          DateTime        @default(now())
+
+  job       ResearchJob @relation(fields: [jobId], references: [id])
+  user      User        @relation(fields: [userId], references: [id])
+  followUps FollowUp[]
+}
+
+model FollowUp {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  reportId   String   @db.Uuid
+  userId     String   @db.Uuid
+  question   String
+  answer     String?
+  turnNumber Int
+  createdAt  DateTime @default(now())
+
+  report Report @relation(fields: [reportId], references: [id])
+  user   User   @relation(fields: [userId], references: [id])
+}
