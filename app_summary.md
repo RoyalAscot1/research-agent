@@ -40,7 +40,7 @@ Both share a single Postgres database.
 | Next.js 16 (App Router) | React framework. Routes: `/` (prompt), `/history`, `/chat/[id]` |
 | Tailwind CSS | Styling |
 | shadcn/ui | Accessible UI components (inputs, buttons, dialogs, badges) |
-| SWR | Polls job status endpoint every 2s during report generation |
+| framer-motion | Animations — entrance, state transitions, spring-physics interactions |
 | Clerk | Auth — Google OAuth, session management, hosted sign-in UI |
 
 ### Backend
@@ -238,7 +238,7 @@ Sentiment note: [Hand-crafted summary of nuances the aggregate score misses]
 5. Add Tavily researcher node (done)
 6. Add YouTube comments + VADER sentiment node (done)
 7. Implement real FastAPI report + history endpoints (stubs → real DB reads, add auth guards) (done)
-8. Next.js frontend — prompt screen + progress polling
+8. Next.js frontend — prompt screen + progress polling (done)
 9. Next.js frontend — chat screen (report card display, no follow-ups yet)
 10. Synthesizer prompt iteration — run 20+ real queries in the browser, refine until quality is consistent
 11. Follow-up endpoint
