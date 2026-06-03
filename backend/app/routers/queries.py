@@ -1,11 +1,12 @@
 import uuid
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, BackgroundTasks, Depends
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import get_current_user
 from app.database import get_db
+from app.graph.graph import run_graph
 from app.models.models import ResearchJob, User
 
 router = APIRouter(tags=["queries"])
@@ -18,6 +19,7 @@ class QueryRequest(BaseModel):
 @router.post("/queries", status_code=202)
 async def create_query(
     body: QueryRequest,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -30,5 +32,5 @@ async def create_query(
     db.add(job)
     await db.commit()
     await db.refresh(job)
-    # TODO: enqueue LangGraph agent (step 4)
+    background_tasks.add_task(run_graph, str(job.id), str(current_user.id), body.query)
     return {"job_id": str(job.id), "status": job.status}
