@@ -10,17 +10,18 @@ frontend/  Next.js 16 (TypeScript)
 ```
 
 ## Current state
-- Backend: FastAPI with Clerk JWT auth wired up; `POST /queries` creates real `research_jobs` rows; all other endpoints still stub
+- Backend: FastAPI with Clerk JWT auth wired up; `POST /queries` creates a `research_jobs` row and fires a LangGraph background task; `GET /jobs/{job_id}/status` reads live status from DB; report/history endpoints still stub
 - Frontend: Next.js 16, Tailwind, shadcn/ui, Prisma v7, stub pages for `/`, `/history`, `/chat/[id]`
 - Database: Neon Postgres live — 5 tables (`users`, `research_jobs`, `reports`, `follow_ups`, `alembic_version`). Alembic owns all migrations; Prisma mirrors via `db pull`.
 - Auth: Clerk (`@clerk/nextjs`) — `middleware.ts` and `ClerkProvider` in layout wired up, Google sign-in working, DB cleaned up (NextAuth tables dropped, `clerk_user_id` on `users`). Backend verifies Clerk JWTs and upserts users on first request (`app/auth.py`).
-- Next step: LangGraph single node — Gemini only (step 4)
+- LangGraph: single Gemini node live (`app/graph/graph.py`). `run_graph` runs as a FastAPI `BackgroundTasks` task — pending → running → done/failed with a `reports` row written on success.
+- Next step: Add Tavily researcher node (step 5)
 
 ## Build order (from app_summary.md)
 1. Postgres schema + Alembic migrations (done)
 2. FastAPI skeleton (done)
 3. Clerk — auth flow end to end (done)
-4. LangGraph graph — single node (Gemini only)
+4. LangGraph graph — single node (Gemini only) (done)
 5. Add Tavily researcher node
 6. Add PRAW + VADER sentiment node
 7. Add pytrends to sentiment node
@@ -66,6 +67,13 @@ frontend/  Next.js 16 (TypeScript)
 - Run from `backend/` with venv active: `source .venv/bin/activate`
 - Start server: `uvicorn app.main:app --reload`
 - Requires `backend/.env` — copy from `.env.example` and fill in values
+
+### LangGraph
+- Graph lives in `backend/app/graph/graph.py` — `run_graph` is the entry point called by `BackgroundTasks`
+- Uses `gemini-3.1-flash-lite-preview` (not 1.5-flash — that model is unavailable on the current API key)
+- `run_graph` opens its own `AsyncSessionLocal` session — it runs outside any request context so it cannot use the request-scoped `get_db` dependency
+- Error handling: `gemini_node` catches exceptions internally and sets `state["error"]`. Outer `run_graph` should also wrap the whole body in try/except to flip status to `failed` if a DB error occurs after `status = "running"` (not yet done — known gap)
+- `GET /jobs/{job_id}/status` has no auth guard yet — add `get_current_user` before step 11
 
 ### Two ORMs, one DB
 - SQLAlchemy (Python) and Prisma (TypeScript) both point at the same Postgres database

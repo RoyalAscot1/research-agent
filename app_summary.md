@@ -48,7 +48,7 @@ Both share a single Postgres database.
 |------|---------|
 | FastAPI (async) | REST API — all endpoints |
 | LangGraph | Agent orchestration — planner, researcher, sentiment, and synthesizer nodes |
-| Gemini (`langchain-google-genai`) | LLM for planning, synthesis, follow-up answers. Use `gemini-1.5-flash` for most nodes, `gemini-1.5-pro` for the synthesizer |
+| Gemini (`langchain-google-genai`) | LLM for planning, synthesis, follow-up answers. Use `gemini-3.1-flash-lite-preview` for most nodes, `gemini-3.1-flash-preview` for the synthesizer if quality warrants it |
 | Tavily | LLM-optimised web search. Called by the researcher node |
 | PRAW | Reddit API — fetches posts/comments for sentiment analysis |
 | pytrends | Google Trends — search interest data. Unofficial; add retry logic and graceful fallback |
@@ -223,7 +223,7 @@ Sentiment note: [Hand-crafted summary of nuances the aggregate score misses]
 1. Postgres schema + Alembic migrations
 2. FastAPI skeleton with all endpoints returning stubs
 3. Clerk — auth flow end to end
-4. LangGraph graph — single node (Gemini only, no tools) to validate wiring
+4. LangGraph graph — single node (Gemini only, no tools) to validate wiring (done)
 5. Add Tavily researcher node
 6. Add PRAW + VADER sentiment node
 7. Add pytrends to sentiment node
