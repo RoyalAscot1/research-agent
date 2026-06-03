@@ -30,7 +30,8 @@ class User(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     clerk_user_id = Column(String, unique=True, nullable=False)
     email = Column(String, unique=True, nullable=True)
-    created_at = Column(TIMESTAMP(timezone=True), default=_now)
+    # Prisma created this table with camelCase column names
+    created_at = Column("createdAt", TIMESTAMP(timezone=True), default=_now)
 
 
 class ResearchJob(Base):
