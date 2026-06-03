@@ -38,9 +38,11 @@ Both share a single Postgres database.
 | Tool | Purpose |
 |------|---------|
 | Next.js 16 (App Router) | React framework. Routes: `/` (prompt), `/history`, `/chat/[id]` |
-| Tailwind CSS | Styling |
-| shadcn/ui | Accessible UI components (inputs, buttons, dialogs, badges) |
-| SWR | Polls job status endpoint every 2s during report generation |
+| Tailwind CSS v4 | Primary styling system — all layout, color tokens, utilities |
+| framer-motion | Animations — entrance, state transitions, spring-physics interactions |
+| @base-ui/react | Headless UI primitives (the runtime underneath shadcn-generated components) |
+| shadcn/ui (CLI) | Component generator — copies component source into `components/ui/`. Used selectively, not as a full component library |
+| lucide-react | Icon library |
 | Clerk | Auth — Google OAuth, session management, hosted sign-in UI |
 
 ### Backend
@@ -238,7 +240,7 @@ Sentiment note: [Hand-crafted summary of nuances the aggregate score misses]
 5. Add Tavily researcher node (done)
 6. Add YouTube comments + VADER sentiment node (done)
 7. Implement real FastAPI report + history endpoints (stubs → real DB reads, add auth guards) (done)
-8. Next.js frontend — prompt screen + progress polling
+8. Next.js frontend — prompt screen + progress polling (done)
 9. Next.js frontend — chat screen (report card display, no follow-ups yet)
 10. Synthesizer prompt iteration — run 20+ real queries in the browser, refine until quality is consistent
 11. Follow-up endpoint
