@@ -63,7 +63,7 @@ class Report(Base):
     sentiment_positive = Column(Float, nullable=True)
     sentiment_neutral = Column(Float, nullable=True)
     sentiment_negative = Column(Float, nullable=True)
-    reddit_volume = Column(Integer, nullable=True)
+    youtube_comment_volume = Column(Integer, nullable=True)
     source_count = Column(Integer, nullable=True)
     overall_sentiment = Column(
         Enum("Positive", "Mixed", "Negative", name="sentiment_label"),
