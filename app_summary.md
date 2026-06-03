@@ -224,7 +224,7 @@ Sentiment note: [Hand-crafted summary of nuances the aggregate score misses]
 2. FastAPI skeleton with all endpoints returning stubs (done)
 3. Clerk — auth flow end to end (done)
 4. LangGraph graph — single node (Gemini only, no tools) to validate wiring (done)
-5. Add Tavily researcher node
+5. Add Tavily researcher node (done)
 6. Add PRAW + VADER + pytrends sentiment node (combined — no useful intermediate state between the two)
 7. Synthesizer prompt — iterate on 20+ real queries until quality is consistent
 8. Next.js frontend — prompt screen + progress polling (moved earlier — needed to evaluate report quality at scale)
