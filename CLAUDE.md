@@ -17,22 +17,21 @@ frontend/  Next.js 16 (TypeScript)
 - LangGraph: single Gemini node live (`app/graph/graph.py`). `run_graph` runs as a FastAPI `BackgroundTasks` task — pending → running → done/failed with a `reports` row written on success.
 - Next step: Add Tavily researcher node (step 5)
 
-## Build order (from app_summary.md)
+## Build order
 1. Postgres schema + Alembic migrations (done)
 2. FastAPI skeleton (done)
 3. Clerk — auth flow end to end (done)
 4. LangGraph graph — single node (Gemini only) (done)
 5. Add Tavily researcher node
-6. Add PRAW + VADER sentiment node
-7. Add pytrends to sentiment node
-8. Synthesizer prompt
-9. Chroma integration
+6. Add PRAW + VADER + pytrends sentiment node (combined)
+7. Synthesizer prompt — iterate on real queries
+8. Next.js frontend — prompt screen + progress polling
+9. Next.js frontend — chat screen (report card + follow-up chat)
 10. Follow-up endpoint
-11. Next.js frontend — prompt screen + progress polling
-12. Next.js frontend — chat screen
-13. Next.js frontend — history screen
-14. Docker + GitHub Actions + Render deploy
-15. Redis caching (post-v1)
+11. Next.js frontend — history screen
+12. Docker + GitHub Actions + Render deploy
+13. Chroma integration (post-v1)
+14. Redis caching (post-v1)
 
 ## Key gotchas
 
