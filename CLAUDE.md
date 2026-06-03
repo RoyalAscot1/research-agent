@@ -10,14 +10,14 @@ frontend/  Next.js 16 (TypeScript)
 ```
 
 ## Current state
-- Backend: FastAPI with Clerk JWT auth wired up; `POST /queries` creates a `research_jobs` row and fires a LangGraph background task; `GET /jobs/{job_id}/status` reads live status from DB; report/history endpoints still stub
+- Backend: FastAPI with Clerk JWT auth wired up; `POST /queries` creates a `research_jobs` row and fires a LangGraph background task; all report/history endpoints live — `GET /jobs/{job_id}/status` returns `report_id` when done, `GET /reports/{report_id}` returns full report + follow_ups, `GET /history` returns paginated list, `DELETE /history/{report_id}` and `DELETE /history` both implemented. All endpoints auth guarded.
 - Frontend: Next.js 16, Tailwind, shadcn/ui, Prisma v7, stub pages for `/`, `/history`, `/chat/[id]`
 - Database: Neon Postgres live — 5 tables (`users`, `research_jobs`, `reports`, `follow_ups`, `alembic_version`). Alembic owns all migrations; Prisma mirrors via `db pull`.
 - Auth: Clerk (`@clerk/nextjs`) — `middleware.ts` and `ClerkProvider` in layout wired up, Google sign-in working, DB cleaned up (NextAuth tables dropped, `clerk_user_id` on `users`). Backend verifies Clerk JWTs and upserts users on first request (`app/auth.py`).
 - LangGraph: three-node graph live (`app/graph/graph.py`) — `tavily_node` fetches web results (basic search depth, 8 results), `sentiment_node` fetches top YouTube comments and scores them with VADER (positive/neutral/negative), `gemini_node` synthesises everything into a markdown report with `[Source N]` citations and a Public Sentiment section. Sources, sentiment scores, comment volume, and overall_sentiment persisted to the `reports` row. `run_graph` runs as a FastAPI `BackgroundTasks` task — pending → running → done/failed.
 - Tavily `search_depth` is temporarily `"basic"` (1 credit/search) to conserve credits during development — switch to `"advanced"` before shipping.
 - YouTube API key required (`YOUTUBE_API_KEY` in `backend/.env`) — enable YouTube Data API v3 in Google Cloud Console. Quota: 10k units/day free (search = 100 units, comment list = 1 unit/page).
-- Next step: Implement real report + history endpoints (step 7), then frontend (steps 8–13). Synthesizer prompt iteration (step 10) comes after the basic chat screen exists so reports can be evaluated in a browser. Agentic AI (Planner node, Researcher + Chroma loop) is deferred to steps 14–15 after the UI exists to evaluate it properly.
+- Next step: Next.js frontend — prompt screen + progress polling (step 8). Synthesizer prompt iteration (step 10) comes after the basic chat screen exists so reports can be evaluated in a browser. Agentic AI (Planner node, Researcher + Chroma loop) is deferred to steps 14–15 after the UI exists to evaluate it properly.
 - **Current graph is a pipeline, not an agent** — `tavily → sentiment → gemini → END`. No conditional edges, no LLM decision-making, no loops. The Planner and Researcher nodes that make it truly agentic will be added in steps 13–14.
 
 ## Build order
@@ -27,7 +27,7 @@ frontend/  Next.js 16 (TypeScript)
 4. LangGraph graph — single node (Gemini only) (done)
 5. Add Tavily researcher node (done)
 6. Add YouTube comments + VADER sentiment node (done)
-7. Implement real FastAPI report + history endpoints (stubs → real DB reads, add auth guards)
+7. Implement real FastAPI report + history endpoints (stubs → real DB reads, add auth guards) (done)
 8. Next.js frontend — prompt screen + progress polling
 9. Next.js frontend — chat screen (report card display, no follow-ups yet)
 10. Synthesizer prompt iteration — run real queries in the browser, refine until quality is consistent
@@ -79,7 +79,7 @@ frontend/  Next.js 16 (TypeScript)
 - `run_graph` opens its own `AsyncSessionLocal` session — it runs outside any request context so it cannot use the request-scoped `get_db` dependency
 - `tavily_node`, `sentiment_node`, and `gemini_node` catch exceptions internally. `tavily_node` and `sentiment_node` failures are non-fatal — the graph continues with empty sources/sentiment. `gemini_node` failures set `state["error"]` which flips the job to `failed`.
 - Outer `run_graph` wraps the full body in try/except to flip status to `failed` on DB errors after `status = "running"`.
-- `GET /jobs/{job_id}/status` has no auth guard yet — add `get_current_user` before step 11
+
 
 ### Two ORMs, one DB
 - SQLAlchemy (Python) and Prisma (TypeScript) both point at the same Postgres database

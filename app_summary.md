@@ -237,7 +237,7 @@ Sentiment note: [Hand-crafted summary of nuances the aggregate score misses]
 4. LangGraph graph — single node (Gemini only, no tools) to validate wiring (done)
 5. Add Tavily researcher node (done)
 6. Add YouTube comments + VADER sentiment node (done)
-7. Implement real FastAPI report + history endpoints (stubs → real DB reads, add auth guards)
+7. Implement real FastAPI report + history endpoints (stubs → real DB reads, add auth guards) (done)
 8. Next.js frontend — prompt screen + progress polling
 9. Next.js frontend — chat screen (report card display, no follow-ups yet)
 10. Synthesizer prompt iteration — run 20+ real queries in the browser, refine until quality is consistent
