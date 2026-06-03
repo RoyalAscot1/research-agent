@@ -7,9 +7,7 @@ class Settings(BaseSettings):
     database_url: str
     gemini_api_key: str
     tavily_api_key: str
-    reddit_client_id: str
-    reddit_client_secret: str
-    reddit_user_agent: str = "lens/1.0"
+    youtube_api_key: str
     frontend_url: str = "http://localhost:3000"
 
 

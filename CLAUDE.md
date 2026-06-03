@@ -1,7 +1,7 @@
 # Lens — Claude Working Guide
 
 ## What this is
-Lens is a full-stack AI research and sentiment app. Users submit natural language queries and receive AI-generated reports combining web research with Reddit/Google Trends sentiment data. See `app_summary.md` for the full product spec.
+Lens is a full-stack AI research and sentiment app. Users submit natural language queries and receive AI-generated reports combining web research with YouTube comment sentiment data. See `app_summary.md` for the full product spec.
 
 ## Repo structure
 ```
@@ -14,9 +14,10 @@ frontend/  Next.js 16 (TypeScript)
 - Frontend: Next.js 16, Tailwind, shadcn/ui, Prisma v7, stub pages for `/`, `/history`, `/chat/[id]`
 - Database: Neon Postgres live — 5 tables (`users`, `research_jobs`, `reports`, `follow_ups`, `alembic_version`). Alembic owns all migrations; Prisma mirrors via `db pull`.
 - Auth: Clerk (`@clerk/nextjs`) — `middleware.ts` and `ClerkProvider` in layout wired up, Google sign-in working, DB cleaned up (NextAuth tables dropped, `clerk_user_id` on `users`). Backend verifies Clerk JWTs and upserts users on first request (`app/auth.py`).
-- LangGraph: two-node graph live (`app/graph/graph.py`) — `tavily_node` fetches web results (basic search depth, 8 results), `gemini_node` synthesises them into a markdown report with `[Source N]` citations. Sources persisted to `raw_context` (JSONB) and `source_count` on the `reports` row. `run_graph` runs as a FastAPI `BackgroundTasks` task — pending → running → done/failed.
+- LangGraph: three-node graph live (`app/graph/graph.py`) — `tavily_node` fetches web results (basic search depth, 8 results), `sentiment_node` fetches top YouTube comments and scores them with VADER (positive/neutral/negative), `gemini_node` synthesises everything into a markdown report with `[Source N]` citations and a Public Sentiment section. Sources, sentiment scores, comment volume, and overall_sentiment persisted to the `reports` row. `run_graph` runs as a FastAPI `BackgroundTasks` task — pending → running → done/failed.
 - Tavily `search_depth` is temporarily `"basic"` (1 credit/search) to conserve credits during development — switch to `"advanced"` before shipping.
-- Next step: Add PRAW + VADER + pytrends sentiment node (step 6)
+- YouTube API key required (`YOUTUBE_API_KEY` in `backend/.env`) — enable YouTube Data API v3 in Google Cloud Console. Quota: 10k units/day free (search = 100 units, comment list = 1 unit/page).
+- Next step: Synthesizer prompt iteration (step 7) — run real queries and refine the Gemini prompt until report quality is consistent
 
 ## Build order
 1. Postgres schema + Alembic migrations (done)
@@ -24,7 +25,7 @@ frontend/  Next.js 16 (TypeScript)
 3. Clerk — auth flow end to end (done)
 4. LangGraph graph — single node (Gemini only) (done)
 5. Add Tavily researcher node (done)
-6. Add PRAW + VADER + pytrends sentiment node (combined)
+6. Add YouTube comments + VADER sentiment node (done)
 7. Synthesizer prompt — iterate on real queries
 8. Next.js frontend — prompt screen + progress polling
 9. Next.js frontend — chat screen (report card + follow-up chat)
@@ -72,7 +73,7 @@ frontend/  Next.js 16 (TypeScript)
 - Graph lives in `backend/app/graph/graph.py` — `run_graph` is the entry point called by `BackgroundTasks`
 - Uses `gemini-3.1-flash-lite-preview` (not 1.5-flash — that model is unavailable on the current API key)
 - `run_graph` opens its own `AsyncSessionLocal` session — it runs outside any request context so it cannot use the request-scoped `get_db` dependency
-- Both `tavily_node` and `gemini_node` catch exceptions internally. `tavily_node` failures are non-fatal — the graph continues with empty sources. `gemini_node` failures set `state["error"]` which flips the job to `failed`.
+- `tavily_node`, `sentiment_node`, and `gemini_node` catch exceptions internally. `tavily_node` and `sentiment_node` failures are non-fatal — the graph continues with empty sources/sentiment. `gemini_node` failures set `state["error"]` which flips the job to `failed`.
 - Outer `run_graph` wraps the full body in try/except to flip status to `failed` on DB errors after `status = "running"`.
 - `GET /jobs/{job_id}/status` has no auth guard yet — add `get_current_user` before step 11
 
@@ -81,5 +82,5 @@ frontend/  Next.js 16 (TypeScript)
 - Alembic runs all migrations; Prisma uses `prisma db pull` to mirror changes
 
 ## Environment variables
-- Backend: `DATABASE_URL`, `GEMINI_API_KEY`, `TAVILY_API_KEY`, `REDDIT_CLIENT_ID`, `REDDIT_CLIENT_SECRET`, `CLERK_SECRET_KEY` — see `backend/.env.example`
+- Backend: `DATABASE_URL`, `GEMINI_API_KEY`, `TAVILY_API_KEY`, `YOUTUBE_API_KEY`, `CLERK_SECRET_KEY` — see `backend/.env.example`
 - Frontend: `DATABASE_URL`, `NEXT_PUBLIC_API_URL`, `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`, `CLERK_SECRET_KEY` — see `frontend/.env.local.example`
