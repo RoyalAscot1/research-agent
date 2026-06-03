@@ -12,13 +12,14 @@ frontend/  Next.js 16 (TypeScript)
 ## Current state
 - Backend: FastAPI skeleton with all 7 stub endpoints, async SQLAlchemy models, Alembic configured
 - Frontend: Next.js 16, Tailwind, shadcn/ui, Prisma v7, stub pages for `/`, `/history`, `/chat/[id]`
-- Database: Neon Postgres live — all 7 tables created (Alembic owns app tables, Prisma owns auth tables)
-- Next step: NextAuth + Prisma auth flow end to end (step 3 of build order)
+- Database: Neon Postgres live — 5 tables (`users`, `research_jobs`, `reports`, `follow_ups`, `alembic_version`). Alembic owns all migrations; Prisma mirrors via `db pull`.
+- Auth: Clerk (`@clerk/nextjs`) — `middleware.ts` and `ClerkProvider` in layout wired up, Google sign-in working, DB cleaned up (NextAuth tables dropped, `clerk_user_id` on `users`)
+- Next step: LangGraph single node — Gemini only (step 4)
 
 ## Build order (from app_summary.md)
 1. Postgres schema + Alembic migrations (done)
 2. FastAPI skeleton (done)
-3. NextAuth + Prisma — auth flow end to end ← next
+3. Clerk — auth flow end to end (done)
 4. LangGraph graph — single node (Gemini only)
 5. Add Tavily researcher node
 6. Add PRAW + VADER sentiment node
@@ -39,6 +40,13 @@ frontend/  Next.js 16 (TypeScript)
 - Turbopack is on by default for both `next dev` and `next build`
 - Node.js 20+ required (`nvm use 20` before running frontend commands)
 
+### Clerk
+- Auth is handled entirely by Clerk — no NextAuth, no `@auth/prisma-adapter`
+- Keys: `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` and `CLERK_SECRET_KEY` in `frontend/.env.local`
+- `middleware.ts` uses `clerkMiddleware` + `createRouteMatcher` to protect `/history` and `/chat`
+- `<ClerkProvider>` wraps the root layout
+- User sync into Postgres `users` table will be done via a Clerk webhook at deploy time (step 14)
+
 ### Prisma v7
 - Connection URL lives in `prisma.config.ts`, NOT in `prisma/schema.prisma`
 - Direct DB connections require `@prisma/adapter-pg` — see `frontend/lib/prisma.ts`
@@ -47,7 +55,7 @@ frontend/  Next.js 16 (TypeScript)
 
 ### Alembic
 - Alembic owns ALL migrations — Prisma must not manage schema changes
-- `users` table is excluded from autogenerate (owned by Prisma/NextAuth) — see `include_object` in `backend/alembic/env.py`
+- `users` table is excluded from autogenerate (owned by Clerk/Prisma) — see `include_object` in `backend/alembic/env.py`
 - Load `.env` before running Alembic: `export $(grep -v '^#' .env | xargs) && alembic <command>`
 - Neon gives a `postgresql://` URL — change to `postgresql+asyncpg://` and replace `sslmode=require` with `ssl=require` for backend use
 
@@ -62,4 +70,4 @@ frontend/  Next.js 16 (TypeScript)
 
 ## Environment variables
 - Backend: `DATABASE_URL`, `GEMINI_API_KEY`, `TAVILY_API_KEY`, `REDDIT_CLIENT_ID`, `REDDIT_CLIENT_SECRET` — see `backend/.env.example`
-- Frontend: `DATABASE_URL`, `NEXT_PUBLIC_API_URL`, `AUTH_SECRET`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` — see `frontend/.env.local.example`
+- Frontend: `DATABASE_URL`, `NEXT_PUBLIC_API_URL`, `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`, `CLERK_SECRET_KEY` — see `frontend/.env.local.example`

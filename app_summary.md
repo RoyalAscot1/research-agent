@@ -8,7 +8,7 @@ Lens is a web app that lets users ask natural language research questions and re
 
 ## User journey
 
-1. **Sign in** — email/password or Google OAuth. Lands directly on the prompt screen.
+1. **Sign in** — Google OAuth via Clerk. Lands directly on the prompt screen.
 2. **Prompt screen** — single search bar. User types a query and hits Run. No source configuration — the agent decides automatically.
 3. **Progress screen** — live step indicator while the agent runs (Planning → Researching → Sentiment → Writing). Typical run time: 15–40 seconds. User can navigate away; job continues in background.
 4. **Chat screen** — the finished report loads as a styled card at the top:
@@ -37,11 +37,11 @@ Both share a single Postgres database.
 ### Frontend
 | Tool | Purpose |
 |------|---------|
-| Next.js 14 (App Router) | React framework. Routes: `/` (prompt), `/history`, `/chat/[id]` |
+| Next.js 16 (App Router) | React framework. Routes: `/` (prompt), `/history`, `/chat/[id]` |
 | Tailwind CSS | Styling |
 | shadcn/ui | Accessible UI components (inputs, buttons, dialogs, badges) |
 | SWR | Polls job status endpoint every 2s during report generation |
-| NextAuth.js | Auth — email/password + Google OAuth, session management |
+| Clerk | Auth — Google OAuth, session management, hosted sign-in UI |
 
 ### Backend
 | Tool | Purpose |
@@ -55,7 +55,7 @@ Both share a single Postgres database.
 | VADER (nltk) | Sentiment scoring for Reddit posts. Classifies positive/neutral/negative |
 | SQLAlchemy (async) + asyncpg | Python ORM for Postgres |
 | Alembic | Database migrations (owns all schema changes) |
-| Prisma | TypeScript ORM for Next.js side (auth + history queries) — uses same Postgres DB |
+| Prisma | TypeScript ORM for Next.js side (history + app queries) — uses same Postgres DB |
 
 ### Storage
 | Tool | Purpose |
@@ -85,8 +85,8 @@ Both share a single Postgres database.
 ## Database schema (Postgres)
 
 ```sql
--- Managed by NextAuth via Prisma adapter
-users (id, email, hashed_password, created_at)
+-- users table synced from Clerk via webhook (Clerk owns auth, Postgres owns app data)
+users (id, clerk_user_id, email, created_at)
 
 -- One row per query run
 research_jobs (
@@ -212,9 +212,9 @@ Sentiment note: [Hand-crafted summary of nuances the aggregate score misses]
 - **VADER upgrade path**: Start with VADER for speed. Upgrade to `cardiffnlp/twitter-roberta-base-sentiment` if sarcasm/slang causes poor results.
 - **Report overall sentiment**: Derive from scores — Positive if positive% > 55%, Negative if negative% > 30%, else Mixed.
 - **Follow-up chips**: Synthesizer returns a JSON block at the end of every report: `{"followups": ["...", "...", "..."]}`. Frontend strips this from the display and renders as clickable chips.
-- **NextAuth + Prisma adapter**: Use `@auth/prisma-adapter`. Configure `NEXTAUTH_SECRET` and `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET` as environment variables on Vercel.
+- **Clerk auth**: Use `@clerk/nextjs`. Configure `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` and `CLERK_SECRET_KEY` as environment variables on Vercel. Sync Clerk users into the `users` table via a Clerk webhook on `user.created`.
 - **CORS**: Configure FastAPI CORS middleware to allow requests from the Vercel frontend domain.
-- **Environment variables**: Never hardcode API keys. Use Render environment variables for the backend (GEMINI_API_KEY, TAVILY_API_KEY, REDDIT_CLIENT_ID, REDDIT_CLIENT_SECRET, DATABASE_URL). Use Vercel environment variables for the frontend (NEXT_PUBLIC_API_URL, NEXTAUTH_SECRET, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET).
+- **Environment variables**: Never hardcode API keys. Use Render environment variables for the backend (GEMINI_API_KEY, TAVILY_API_KEY, REDDIT_CLIENT_ID, REDDIT_CLIENT_SECRET, DATABASE_URL). Use Vercel environment variables for the frontend (NEXT_PUBLIC_API_URL, NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY, CLERK_SECRET_KEY).
 
 ---
 
@@ -222,7 +222,7 @@ Sentiment note: [Hand-crafted summary of nuances the aggregate score misses]
 
 1. Postgres schema + Alembic migrations
 2. FastAPI skeleton with all endpoints returning stubs
-3. NextAuth + Prisma — auth flow end to end
+3. Clerk — auth flow end to end
 4. LangGraph graph — single node (Gemini only, no tools) to validate wiring
 5. Add Tavily researcher node
 6. Add PRAW + VADER sentiment node
