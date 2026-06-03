@@ -8,58 +8,15 @@ datasource db {
 }
 
 model User {
-  id             String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  name           String?
-  email          String?         @unique
-  emailVerified  DateTime?
-  image          String?
-  hashedPassword String?
-  createdAt      DateTime        @default(now())
-  accounts       Account[]
-  follow_ups     follow_ups[]
-  reports        reports[]
-  research_jobs  research_jobs[]
-  sessions       Session[]
+  id            String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  email         String?         @unique
+  createdAt     DateTime        @default(now())
+  clerkUserId   String          @unique @map("clerk_user_id") @db.VarChar
+  follow_ups    follow_ups[]
+  reports       reports[]
+  research_jobs research_jobs[]
 
   @@map("users")
-}
-
-model Account {
-  id                String  @id @default(cuid())
-  userId            String  @db.Uuid
-  type              String
-  provider          String
-  providerAccountId String
-  refresh_token     String?
-  access_token      String?
-  expires_at        Int?
-  token_type        String?
-  scope             String?
-  id_token          String?
-  session_state     String?
-  user              User    @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@unique([provider, providerAccountId])
-  @@map("accounts")
-}
-
-model Session {
-  id           String   @id @default(cuid())
-  sessionToken String   @unique
-  userId       String   @db.Uuid
-  expires      DateTime
-  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@map("sessions")
-}
-
-model VerificationToken {
-  identifier String
-  token      String   @unique
-  expires    DateTime
-
-  @@unique([identifier, token])
-  @@map("verification_tokens")
 }
 
 model alembic_version {
