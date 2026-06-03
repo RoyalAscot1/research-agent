@@ -142,9 +142,25 @@ DELETE /history                        Clear all history for the user
 
 ---
 
-## LangGraph agent graph
+## LangGraph graph
 
-The agent runs as a directed graph with four nodes:
+### Current state (pipeline — steps 1–6)
+
+The graph is a straight-line pipeline with no agentic decision-making:
+
+```
+tavily → sentiment → gemini → END
+```
+
+**tavily** — calls Tavily for web results (basic search depth, 8 results).
+
+**sentiment** — fetches top YouTube comments for the query, scores them with VADER, returns positive/neutral/negative percentages.
+
+**gemini** — synthesises web results + sentiment into a markdown report with `[Source N]` citations and a Public Sentiment section.
+
+### Target state (agent — steps 13–14, post-frontend)
+
+The graph will be extended into a true agent with conditional edges and a re-plan loop:
 
 ```
 Planner → Researcher → Sentiment → Synthesizer
@@ -152,15 +168,15 @@ Planner → Researcher → Sentiment → Synthesizer
            (re-plan if needed, max 3 iterations)
 ```
 
-**Planner** — Gemini decides which tools to call and how to decompose the query.
+**Planner** — Gemini decides how to decompose the query and which tools to call. Introduces conditional edges — the graph branches based on LLM output.
 
-**Researcher** — calls Tavily for web results. Chunks and embeds results into Chroma (tagged with `user_id`). Checks Chroma for relevant prior research before calling Tavily.
+**Researcher** — calls Tavily for web results. Checks Chroma for relevant prior research before calling Tavily (tagged per `user_id`). Chunks and embeds new results into Chroma. Can trigger a re-plan loop if results are insufficient.
 
-**Sentiment** — calls YouTube Data API v3 to fetch top video comments for the query. Scores comments with VADER. Returns structured sentiment context block.
+**Sentiment** — unchanged from current implementation.
 
-**Synthesizer** — assembles a prompt from: system instruction + web research chunks (with relevance scores) + sentiment context block + output format instruction. Calls Gemini to write the final 200–300 word report. Also generates 3 follow-up suggestions as JSON in the same call. Saves `raw_context` to Postgres for follow-up use.
+**Synthesizer** — assembles a prompt from: system instruction + web research chunks (with relevance scores) + sentiment context block + output format instruction. Also generates 3 follow-up suggestions as JSON in the same call.
 
-**Token budget** — enforce `max_iterations=3` on the graph. Use token counting to prevent runaway Gemini calls.
+**Token budget** — enforce `max_iterations=3` on the graph to prevent runaway Gemini calls.
 
 ---
 
@@ -221,11 +237,14 @@ Sentiment note: [Hand-crafted summary of nuances the aggregate score misses]
 4. LangGraph graph — single node (Gemini only, no tools) to validate wiring (done)
 5. Add Tavily researcher node (done)
 6. Add YouTube comments + VADER sentiment node (done)
-7. Synthesizer prompt — iterate on 20+ real queries until quality is consistent
-8. Next.js frontend — prompt screen + progress polling (moved earlier — needed to evaluate report quality at scale)
-9. Next.js frontend — chat screen (report card + follow-up chat)
-10. Follow-up endpoint
-11. Next.js frontend — history screen
-12. Docker + GitHub Actions + Render deploy
-13. Chroma integration (post-v1— adds complexity without affecting core product quality)
-14. Redis caching (post-v1)
+7. Implement real FastAPI report + history endpoints (stubs → real DB reads, add auth guards)
+8. Next.js frontend — prompt screen + progress polling
+9. Next.js frontend — chat screen (report card display, no follow-ups yet)
+10. Synthesizer prompt iteration — run 20+ real queries in the browser, refine until quality is consistent
+11. Follow-up endpoint
+12. Next.js frontend — follow-up chat UI
+13. Next.js frontend — history screen
+14. Add Planner node — LLM decides how to decompose the query and which tools to call (introduces true agentic behaviour via conditional edges)
+15. Add Researcher node + Chroma — semantic retrieval of prior research, re-plan loop (max 3 iterations), vector embeddings per user
+16. Docker + GitHub Actions + Render deploy
+17. Redis caching (post-v1)

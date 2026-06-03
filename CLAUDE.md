@@ -17,7 +17,8 @@ frontend/  Next.js 16 (TypeScript)
 - LangGraph: three-node graph live (`app/graph/graph.py`) — `tavily_node` fetches web results (basic search depth, 8 results), `sentiment_node` fetches top YouTube comments and scores them with VADER (positive/neutral/negative), `gemini_node` synthesises everything into a markdown report with `[Source N]` citations and a Public Sentiment section. Sources, sentiment scores, comment volume, and overall_sentiment persisted to the `reports` row. `run_graph` runs as a FastAPI `BackgroundTasks` task — pending → running → done/failed.
 - Tavily `search_depth` is temporarily `"basic"` (1 credit/search) to conserve credits during development — switch to `"advanced"` before shipping.
 - YouTube API key required (`YOUTUBE_API_KEY` in `backend/.env`) — enable YouTube Data API v3 in Google Cloud Console. Quota: 10k units/day free (search = 100 units, comment list = 1 unit/page).
-- Next step: Synthesizer prompt iteration (step 7) — run real queries and refine the Gemini prompt until report quality is consistent
+- Next step: Implement real report + history endpoints (step 7), then frontend (steps 8–13). Synthesizer prompt iteration (step 10) comes after the basic chat screen exists so reports can be evaluated in a browser. Agentic AI (Planner node, Researcher + Chroma loop) is deferred to steps 14–15 after the UI exists to evaluate it properly.
+- **Current graph is a pipeline, not an agent** — `tavily → sentiment → gemini → END`. No conditional edges, no LLM decision-making, no loops. The Planner and Researcher nodes that make it truly agentic will be added in steps 13–14.
 
 ## Build order
 1. Postgres schema + Alembic migrations (done)
@@ -26,14 +27,17 @@ frontend/  Next.js 16 (TypeScript)
 4. LangGraph graph — single node (Gemini only) (done)
 5. Add Tavily researcher node (done)
 6. Add YouTube comments + VADER sentiment node (done)
-7. Synthesizer prompt — iterate on real queries
+7. Implement real FastAPI report + history endpoints (stubs → real DB reads, add auth guards)
 8. Next.js frontend — prompt screen + progress polling
-9. Next.js frontend — chat screen (report card + follow-up chat)
-10. Follow-up endpoint
-11. Next.js frontend — history screen
-12. Docker + GitHub Actions + Render deploy
-13. Chroma integration (post-v1)
-14. Redis caching (post-v1)
+9. Next.js frontend — chat screen (report card display, no follow-ups yet)
+10. Synthesizer prompt iteration — run real queries in the browser, refine until quality is consistent
+11. Follow-up endpoint
+12. Next.js frontend — follow-up chat UI
+13. Next.js frontend — history screen
+14. Add Planner node — LLM decides how to decompose the query (introduces true agentic behaviour)
+15. Add Researcher node + Chroma — semantic retrieval, re-plan loop (max 3 iterations)
+16. Docker + GitHub Actions + Render deploy
+17. Redis caching (post-v1)
 
 ## Key gotchas
 
