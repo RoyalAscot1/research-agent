@@ -14,15 +14,16 @@ frontend/  Next.js 16 (TypeScript)
 - Frontend: Next.js 16, Tailwind, shadcn/ui, Prisma v7, stub pages for `/`, `/history`, `/chat/[id]`
 - Database: Neon Postgres live — 5 tables (`users`, `research_jobs`, `reports`, `follow_ups`, `alembic_version`). Alembic owns all migrations; Prisma mirrors via `db pull`.
 - Auth: Clerk (`@clerk/nextjs`) — `middleware.ts` and `ClerkProvider` in layout wired up, Google sign-in working, DB cleaned up (NextAuth tables dropped, `clerk_user_id` on `users`). Backend verifies Clerk JWTs and upserts users on first request (`app/auth.py`).
-- LangGraph: single Gemini node live (`app/graph/graph.py`). `run_graph` runs as a FastAPI `BackgroundTasks` task — pending → running → done/failed with a `reports` row written on success.
-- Next step: Add Tavily researcher node (step 5)
+- LangGraph: two-node graph live (`app/graph/graph.py`) — `tavily_node` fetches web results (basic search depth, 8 results), `gemini_node` synthesises them into a markdown report with `[Source N]` citations. Sources persisted to `raw_context` (JSONB) and `source_count` on the `reports` row. `run_graph` runs as a FastAPI `BackgroundTasks` task — pending → running → done/failed.
+- Tavily `search_depth` is temporarily `"basic"` (1 credit/search) to conserve credits during development — switch to `"advanced"` before shipping.
+- Next step: Add PRAW + VADER + pytrends sentiment node (step 6)
 
 ## Build order
 1. Postgres schema + Alembic migrations (done)
 2. FastAPI skeleton (done)
 3. Clerk — auth flow end to end (done)
 4. LangGraph graph — single node (Gemini only) (done)
-5. Add Tavily researcher node
+5. Add Tavily researcher node (done)
 6. Add PRAW + VADER + pytrends sentiment node (combined)
 7. Synthesizer prompt — iterate on real queries
 8. Next.js frontend — prompt screen + progress polling
@@ -71,7 +72,8 @@ frontend/  Next.js 16 (TypeScript)
 - Graph lives in `backend/app/graph/graph.py` — `run_graph` is the entry point called by `BackgroundTasks`
 - Uses `gemini-3.1-flash-lite-preview` (not 1.5-flash — that model is unavailable on the current API key)
 - `run_graph` opens its own `AsyncSessionLocal` session — it runs outside any request context so it cannot use the request-scoped `get_db` dependency
-- Error handling: `gemini_node` catches exceptions internally and sets `state["error"]`. Outer `run_graph` should also wrap the whole body in try/except to flip status to `failed` if a DB error occurs after `status = "running"` (not yet done — known gap)
+- Both `tavily_node` and `gemini_node` catch exceptions internally. `tavily_node` failures are non-fatal — the graph continues with empty sources. `gemini_node` failures set `state["error"]` which flips the job to `failed`.
+- Outer `run_graph` wraps the full body in try/except to flip status to `failed` on DB errors after `status = "running"`.
 - `GET /jobs/{job_id}/status` has no auth guard yet — add `get_current_user` before step 11
 
 ### Two ORMs, one DB
