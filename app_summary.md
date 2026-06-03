@@ -250,3 +250,10 @@ Sentiment note: [Hand-crafted summary of nuances the aggregate score misses]
 15. Add Researcher node + Chroma — semantic retrieval of prior research, re-plan loop (max 3 iterations), vector embeddings per user
 16. Docker + GitHub Actions + Render deploy
 17. Redis caching (post-v1)
+
+---
+
+## Deferred polish (v2)
+
+- **Progress indicator redesign** — replace the spinning disk with a stepped line moving between named points (Searching → Sentiment → Writing). Only worth doing once step names are wired up via the progress reporting note above.
+- **Light/dark mode toggle** — the design is dark-first; a toggle can be added post-v1 once core functionality is complete.
