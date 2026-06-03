@@ -56,6 +56,7 @@ frontend/  Next.js 16 (TypeScript)
 - `<ClerkProvider>` wraps the root layout
 - **Backend JWT verification**: `app/auth.py` — `get_current_user` dependency verifies the Bearer token via Clerk's JWKS endpoint (RS256), then upserts the user into Postgres. Use as a dependency on any protected endpoint.
 - **User upsert**: happens lazily on first API request — no webhook needed for local dev. A `user.created` webhook (step 14) will complement this in production.
+- **`getToken()` race condition**: On first page load, `getToken()` can return `null` even when `isSignedIn` is true — the session token hasn't been cached yet. Always use the `resolveToken` helper in `app/page.tsx` (tries once, waits 350ms, retries) rather than calling `getToken()` directly. Copy this pattern to any future page that makes authenticated API calls.
 - **User deletion**: must be handled via a `user.deleted` Clerk webhook in step 14 — no code for this yet.
 - **`users` table column names**: Prisma created the table with camelCase columns (`createdAt`, etc.). The SQLAlchemy `User` model maps these explicitly (e.g. `Column("createdAt", ...)`). Do not rename them without an Alembic migration.
 

@@ -9,6 +9,13 @@ import { api } from "@/lib/api";
 
 type Status = "idle" | "submitting" | "polling" | "error";
 
+async function resolveToken(getToken: () => Promise<string | null>): Promise<string | null> {
+  const token = await getToken();
+  if (token) return token;
+  await new Promise((r) => setTimeout(r, 350));
+  return getToken();
+}
+
 const PLACEHOLDERS = [
   "Impact of AI on the job market",
   "Electric vehicle adoption trends",
@@ -97,7 +104,7 @@ export default function HomePage() {
     const poll = async () => {
       if (cancelledRef.current) return;
       try {
-        const token = await getToken();
+        const token = await resolveToken(getToken);
         if (!token) { setStatus("error"); setError("Session expired. Please sign in again."); return; }
         const data = await api.getJobStatus(token, jobId);
         if (data.status === "done" && data.report_id) {
@@ -123,12 +130,22 @@ export default function HomePage() {
     setStatus("submitting");
     setError(null);
     try {
-      const token = await getToken();
+      const token = await resolveToken(getToken);
       if (!token) { setStatus("error"); setError("Session expired. Please sign in again."); return; }
-      const { job_id } = await api.createQuery(token, query.trim());
-      setJobId(job_id);
+      let result: { job_id: string; status: string } | null = null;
+      try {
+        result = await api.createQuery(token, query.trim());
+      } catch (firstErr) {
+        console.warn("createQuery first attempt failed, retrying in 500ms:", firstErr);
+        await new Promise((r) => setTimeout(r, 500));
+        const retryToken = await resolveToken(getToken);
+        if (!retryToken) { setStatus("error"); setError("Session expired. Please sign in again."); return; }
+        result = await api.createQuery(retryToken, query.trim());
+      }
+      setJobId(result.job_id);
       setStatus("polling");
-    } catch {
+    } catch (err) {
+      console.error("createQuery failed:", err);
       setStatus("error");
       setError("Failed to start research. Please try again.");
     }

@@ -38,9 +38,11 @@ Both share a single Postgres database.
 | Tool | Purpose |
 |------|---------|
 | Next.js 16 (App Router) | React framework. Routes: `/` (prompt), `/history`, `/chat/[id]` |
-| Tailwind CSS | Styling |
-| shadcn/ui | Accessible UI components (inputs, buttons, dialogs, badges) |
+| Tailwind CSS v4 | Primary styling system — all layout, color tokens, utilities |
 | framer-motion | Animations — entrance, state transitions, spring-physics interactions |
+| @base-ui/react | Headless UI primitives (the runtime underneath shadcn-generated components) |
+| shadcn/ui (CLI) | Component generator — copies component source into `components/ui/`. Used selectively, not as a full component library |
+| lucide-react | Icon library |
 | Clerk | Auth — Google OAuth, session management, hosted sign-in UI |
 
 ### Backend
