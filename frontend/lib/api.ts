@@ -1,3 +1,32 @@
+export interface ReportSource {
+  title: string;
+  url: string;
+  published_date: string | null;
+  score: number | null;
+}
+
+export interface ReportData {
+  report_id: string;
+  job_id: string;
+  query: string | null;
+  report_markdown: string | null;
+  sentiment_positive: number | null;
+  sentiment_neutral: number | null;
+  sentiment_negative: number | null;
+  youtube_comment_volume: number | null;
+  overall_sentiment: "Positive" | "Mixed" | "Negative" | null;
+  source_count: number | null;
+  sources: ReportSource[];
+  suggested_followups: string[] | null;
+  created_at: string;
+  completed_in_seconds: number | null;
+  follow_ups: Array<{
+    question: string;
+    answer: string | null;
+    turn_number: number;
+  }>;
+}
+
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
 async function apiFetch<T>(path: string, token: string, init?: RequestInit): Promise<T> {
@@ -27,7 +56,7 @@ export const api = {
     ),
 
   getReport: (token: string, reportId: string) =>
-    apiFetch<Record<string, unknown>>(`/reports/${reportId}`, token),
+    apiFetch<ReportData>(`/reports/${reportId}`, token),
 
   createFollowup: (token: string, reportId: string, question: string) =>
     apiFetch<{ answer: string; turn_number: number }>(

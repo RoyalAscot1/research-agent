@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import get_current_user
 from app.database import get_db
-from app.models.models import FollowUp, Report, User
+from app.models.models import FollowUp, Report, ResearchJob, User
 
 router = APIRouter(tags=["reports"])
 
@@ -28,6 +28,12 @@ async def get_report(
     if report.user_id != current_user.id:
         raise HTTPException(status_code=403, detail="Forbidden")
 
+    job = await db.get(ResearchJob, report.job_id)
+
+    completed_in_seconds = None
+    if job and job.completed_at and job.created_at:
+        completed_in_seconds = round((job.completed_at - job.created_at).total_seconds())
+
     result = await db.execute(
         select(FollowUp)
         .where(FollowUp.report_id == report.id)
@@ -35,9 +41,20 @@ async def get_report(
     )
     follow_ups = result.scalars().all()
 
+    sources = [
+        {
+            "title": s.get("title", ""),
+            "url": s.get("url", ""),
+            "published_date": s.get("published_date"),
+            "score": s.get("score"),
+        }
+        for s in (report.raw_context or [])
+    ]
+
     return {
         "report_id": str(report.id),
         "job_id": str(report.job_id),
+        "query": job.query if job else None,
         "report_markdown": report.report_markdown,
         "sentiment_positive": report.sentiment_positive,
         "sentiment_neutral": report.sentiment_neutral,
@@ -45,8 +62,10 @@ async def get_report(
         "youtube_comment_volume": report.youtube_comment_volume,
         "overall_sentiment": report.overall_sentiment,
         "source_count": report.source_count,
+        "sources": sources,
         "suggested_followups": report.suggested_followups,
         "created_at": report.created_at,
+        "completed_in_seconds": completed_in_seconds,
         "follow_ups": [
             {
                 "question": fu.question,
