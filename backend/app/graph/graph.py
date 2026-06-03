@@ -60,24 +60,32 @@ async def run_graph(job_id: str, user_id: str, query: str) -> None:
         job.status = "running"
         await db.commit()
 
-        state = await _graph.ainvoke(
-            {"job_id": job_id, "user_id": user_id, "query": query, "report_markdown": None, "error": None}
-        )
-
-        now = datetime.now(timezone.utc)
-        if state["error"]:
-            job.status = "failed"
-            job.completed_at = now
-        else:
-            db.add(
-                Report(
-                    id=uuid.uuid4(),
-                    job_id=uuid.UUID(job_id),
-                    user_id=uuid.UUID(user_id),
-                    report_markdown=state["report_markdown"],
-                )
+        try:
+            state = await _graph.ainvoke(
+                {"job_id": job_id, "user_id": user_id, "query": query, "report_markdown": None, "error": None}
             )
-            job.status = "done"
-            job.completed_at = now
 
-        await db.commit()
+            now = datetime.now(timezone.utc)
+            if state["error"]:
+                job.status = "failed"
+                job.completed_at = now
+            else:
+                db.add(
+                    Report(
+                        id=uuid.uuid4(),
+                        job_id=uuid.UUID(job_id),
+                        user_id=uuid.UUID(user_id),
+                        report_markdown=state["report_markdown"],
+                    )
+                )
+                job.status = "done"
+                job.completed_at = now
+
+            await db.commit()
+        except Exception:
+            await db.rollback()
+            job = await db.get(ResearchJob, uuid.UUID(job_id))
+            if job:
+                job.status = "failed"
+                job.completed_at = datetime.now(timezone.utc)
+                await db.commit()
