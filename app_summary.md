@@ -197,13 +197,13 @@ Planner → Researcher → Sentiment → Synthesizer
 Follow-ups do NOT re-run the full agent graph. They re-use existing research context.
 
 **v1 (steps 12–13) — stateless re-synthesis from `raw_context`:**
-1. Verify Clerk JWT
-2. Count existing `follow_ups` rows — reject with 403 if ≥ 5
-3. Load `raw_context` from Postgres
-4. Load all prior follow-up Q&A pairs for conversation history
-5. Pass `raw_context` + conversation history + new question to Gemini (synthesizer only)
-6. Save the answer to `follow_ups` table
-7. Return answer — typically responds in ~3 seconds
+1. Verify Clerk JWT + ownership check (403 if report belongs to another user)
+2. Count existing `follow_ups` rows — reject with 429 if ≥ 5
+3. Load `raw_context` from Postgres (Tavily sources stored as JSONB)
+4. Load all prior follow-up Q&A pairs ordered by `turn_number` for conversation history
+5. Pass original query + report_markdown + sources + conversation history + new question to `call_gemini_followup()` in `graph.py`
+6. Save the answer to `follow_ups` table with `turn_number = existing_count + 1`
+7. Return `{answer, turn_number}` — typically responds in ~3 seconds
 
 **v2 (post step 15) — pgvector semantic retrieval:**
 1–2 same as above
@@ -256,7 +256,7 @@ Incorporate this sentiment signal where relevant — note whether public opinion
 9. Next.js frontend — chat screen (report card display, no follow-ups yet) (done)
 10. Synthesizer prompt iteration — run 20+ real queries in the browser, refine until quality is consistent (skipped for now — output quality acceptable)
 11. Next.js frontend — history screen (done)
-12. Follow-up endpoint
+12. Follow-up endpoint (done)
 13. Next.js frontend — follow-up chat UI
 14. Configure LangSmith — set up tracing before adding agentic nodes so every graph execution is observable from day one
 15. Add Planner node — LLM decides how to decompose the query and whether to run sentiment (introduces true agentic behaviour via conditional edges)
