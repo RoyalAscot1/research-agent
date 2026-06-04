@@ -242,14 +242,29 @@ Sentiment note: [Hand-crafted summary of nuances the aggregate score misses]
 7. Implement real FastAPI report + history endpoints (stubs → real DB reads, add auth guards) (done)
 8. Next.js frontend — prompt screen + progress polling (done)
 9. Next.js frontend — chat screen (report card display, no follow-ups yet) (done)
-10. Synthesizer prompt iteration — run 20+ real queries in the browser, refine until quality is consistent
-11. Follow-up endpoint
-12. Next.js frontend — follow-up chat UI
-13. Next.js frontend — history screen
+10. Synthesizer prompt iteration — run 20+ real queries in the browser, refine until quality is consistent (skipped for now — output quality acceptable)
+11. Next.js frontend — history screen
+12. Follow-up endpoint
+13. Next.js frontend — follow-up chat UI
 14. Add Planner node — LLM decides how to decompose the query and which tools to call (introduces true agentic behaviour via conditional edges)
 15. Add Researcher node + Chroma — semantic retrieval of prior research, re-plan loop (max 3 iterations), vector embeddings per user
 16. Docker + GitHub Actions + Render deploy
 17. Redis caching (post-v1)
+
+---
+
+## Production concerns
+
+- **LangSmith** — observability for LangGraph; visual traces of every graph execution showing node inputs/outputs and latency per node. Highest-value addition for debugging and interviews.
+- **Structured logging** — replace print statements with `structlog` JSON logs; every graph node should log inputs, outputs, latency, and cache hits, with a request ID threaded through for end-to-end tracing.
+- **Sentry** — two-line integration for real error tracking and alerting.
+- **Task queue** — `BackgroundTasks` runs jobs in the same process as the web server; replace with ARQ (async, fits the codebase) or Celery + Redis for any real load.
+- **Rate limiting** — no per-user query limits; add with `slowapi` on FastAPI.
+- **Cost guardrails** — no cap on Tavily credits per user; track usage and throttle at a threshold before shipping.
+- **Testing** — no test suite; pytest covering the graph nodes and critical API endpoints is the gap between personal project and production system.
+- **CI/CD** — GitHub Actions running lint + pytest on push and deploying to Render on merge to main; table stakes for a production-aware project (already in build order step 16).
+- **FAISS** — in-process vector search library, faster than pgvector at very large scale but requires manual persistence management; pgvector is the right call for this app.
+- **Elasticsearch** — hybrid BM25 + vector search in one query; worth knowing for interviews as the production alternative to pgvector when exact keyword matching matters alongside semantic search.
 
 ---
 

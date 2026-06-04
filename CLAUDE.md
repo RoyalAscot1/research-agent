@@ -22,7 +22,7 @@ frontend/  Next.js 16 (TypeScript)
 - `GET /reports/{report_id}` returns `query` (from job), `sources` (array from `raw_context`), and `completed_in_seconds` in addition to existing fields.
 - Tavily `search_depth` is temporarily `"basic"` (1 credit/search) to conserve credits during development — switch to `"advanced"` before shipping.
 - YouTube API key required (`YOUTUBE_API_KEY` in `backend/.env`) — enable YouTube Data API v3 in Google Cloud Console. Quota: 10k units/day free (search = 100 units, comment list = 1 unit/page).
-- Next step: Synthesizer prompt iteration (step 10) — run real queries in the browser, refine until quality is consistent. Follow-up endpoint (step 11) comes after.
+- Next step: History screen (step 11) — backend already done, purely frontend work. Follow-up endpoint (step 12) and follow-up chat UI (step 13) come after.
 - **Current graph is a pipeline, not an agent** — `tavily → sentiment → gemini → END`. No conditional edges, no LLM decision-making, no loops. The Planner and Researcher nodes that make it truly agentic will be added in steps 13–14.
 
 ## Build order
@@ -35,10 +35,10 @@ frontend/  Next.js 16 (TypeScript)
 7. Implement real FastAPI report + history endpoints (stubs → real DB reads, add auth guards) (done)
 8. Next.js frontend — prompt screen + progress polling (done)
 9. Next.js frontend — chat screen (report card display, no follow-ups yet) (done)
-10. Synthesizer prompt iteration — run real queries in the browser, refine until quality is consistent
-11. Follow-up endpoint
-12. Next.js frontend — follow-up chat UI
-13. Next.js frontend — history screen
+10. Synthesizer prompt iteration — skipped for now, output quality acceptable
+11. Next.js frontend — history screen
+12. Follow-up endpoint
+13. Next.js frontend — follow-up chat UI
 14. Add Planner node — LLM decides how to decompose the query (introduces true agentic behaviour)
 15. Add Researcher node + Chroma — semantic retrieval, re-plan loop (max 3 iterations)
 16. Docker + GitHub Actions + Render deploy
