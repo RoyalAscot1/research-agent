@@ -161,11 +161,14 @@ export default function HomePage() {
 
       {isLoaded && isSignedIn && (
         <motion.div
-          className="absolute top-5 right-5 z-10"
+          className="absolute top-5 right-5 z-10 flex items-center gap-1"
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           transition={{ delay: 0.9 }}
         >
+          <Button variant="ghost" size="sm" onClick={() => router.push('/history')} className="text-white/30 hover:text-white/60 hover:bg-white/5">
+            History
+          </Button>
           <SignOutButton>
             <Button variant="ghost" size="sm" className="text-white/30 hover:text-white/60 hover:bg-white/5">
               Sign out

@@ -10,11 +10,12 @@ frontend/  Next.js 16 (TypeScript)
 ```
 
 ## Current state
-- Backend: FastAPI with Clerk JWT auth wired up; `POST /queries` creates a `research_jobs` row and fires a LangGraph background task; all report/history endpoints live — `GET /jobs/{job_id}/status` returns `report_id` when done, `GET /reports/{report_id}` returns full report + follow_ups, `GET /history` returns paginated list, `DELETE /history/{report_id}` and `DELETE /history` both implemented. All endpoints auth guarded except `POST /reports/{report_id}/followup` (stub, no auth yet — fix in step 11).
-- Frontend: Next.js 16, Tailwind, shadcn/ui, Prisma v7, framer-motion. Prompt screen live at `/`; `/history` still a stub; `/chat/[id]` live.
-- Prompt screen (`app/page.tsx`): Client Component with four states — loading, sign-in gate, researching (polling), idle/error. Submits query via `POST /queries`, polls `GET /jobs/{job_id}/status` every 2s, redirects to `/chat/{report_id}` on completion. Clerk token fetched fresh each poll tick via `getToken()`.
-- Chat screen (`app/chat/[id]/page.tsx`): Client Component. Uses `React.use(params)` to unwrap the route param. Three render states: loading, error, loaded. Fetches `GET /reports/{id}` on mount using `resolveToken`. Layout: sticky nav (Lens wordmark, copy/download buttons, completion time); query title; three sentiment tiles (conditionally hidden if sentiment is null); markdown report via `react-markdown` + `remark-gfm` with custom dark-themed component overrides; source cards linking to Tavily URLs; suggested follow-up chips (hidden until graph generates them). All sections are conditional — degrades gracefully with no sentiment or no sources.
-- API client (`lib/api.ts`): all methods take `token: string` as first arg. `ReportData` and `ReportSource` types exported; `getReport` is properly typed.
+- Backend: FastAPI with Clerk JWT auth wired up; `POST /queries` creates a `research_jobs` row and fires a LangGraph background task; all report/history endpoints live — `GET /jobs/{job_id}/status` returns `report_id` when done, `GET /reports/{report_id}` returns full report + follow_ups, `GET /history` returns paginated list, `DELETE /history/{report_id}` and `DELETE /history` both implemented. All endpoints auth guarded except `POST /reports/{report_id}/followup` (stub, no auth yet — fix in step 12).
+- Frontend: Next.js 16, Tailwind, shadcn/ui, Prisma v7, framer-motion. All three screens live: `/` (prompt), `/history`, `/chat/[id]`.
+- Prompt screen (`app/page.tsx`): Client Component with four states — loading, sign-in gate, researching (polling), idle/error. Submits query via `POST /queries`, polls `GET /jobs/{job_id}/status` every 2s, redirects to `/chat/{report_id}` on completion. Clerk token fetched fresh each poll tick via `getToken()`. Floating History + Sign Out buttons top-right when signed in.
+- Chat screen (`app/chat/[id]/page.tsx`): Client Component. Uses `React.use(params)` to unwrap the route param. Three render states: loading, error, loaded. Fetches `GET /reports/{id}` on mount using `resolveToken`. Layout: transparent sticky nav (Lens wordmark + History link left, copy/download buttons + completion time right); query title; three sentiment tiles (conditionally hidden if sentiment is null); markdown report via `react-markdown` + `remark-gfm` with custom dark-themed component overrides; source cards linking to Tavily URLs; suggested follow-up chips (hidden until graph generates them). All sections are conditional — degrades gracefully with no sentiment or no sources.
+- History screen (`app/history/page.tsx`): Client Component. Three render states: loading, error, loaded. Fetches `GET /history` on mount. Lists reports as glassmorphism cards — query text, colour-coded sentiment badge, date. Click row navigates to `/chat/{report_id}`. Hover-revealed per-row delete (trash icon) with confirm-free deletion. "Clear all" button with `window.confirm` guard. Empty state with prompt to start a query. Transparent sticky nav (Lens wordmark left, Sign Out right).
+- API client (`lib/api.ts`): all methods take `token: string` as first arg. `ReportData`, `ReportSource`, and `HistoryItem` types exported. `apiFetch` handles 204 No Content responses (skips `res.json()`) — required for DELETE endpoints.
 - Design: dark-first (Space Grotesk font, deep navy background, violet accent). Animated gradient mesh (three drifting blobs via CSS keyframes) + SVG grain texture. Glassmorphism card with animated violet border glow on focus. Gradient wordmark. Framer Motion staggered entrance + AnimatePresence state transitions + spring-physics buttons. Typewriter placeholder.
 - Database: Neon Postgres live — 5 tables (`users`, `research_jobs`, `reports`, `follow_ups`, `alembic_version`). Alembic owns all migrations; Prisma mirrors via `db pull`.
 - Auth: Clerk (`@clerk/nextjs`) — `middleware.ts` and `ClerkProvider` in layout wired up, Google sign-in working, DB cleaned up (NextAuth tables dropped, `clerk_user_id` on `users`). Backend verifies Clerk JWTs and upserts users on first request (`app/auth.py`).
@@ -22,8 +23,8 @@ frontend/  Next.js 16 (TypeScript)
 - `GET /reports/{report_id}` returns `query` (from job), `sources` (array from `raw_context`), and `completed_in_seconds` in addition to existing fields.
 - Tavily `search_depth` is temporarily `"basic"` (1 credit/search) to conserve credits during development — switch to `"advanced"` before shipping.
 - YouTube API key required (`YOUTUBE_API_KEY` in `backend/.env`) — enable YouTube Data API v3 in Google Cloud Console. Quota: 10k units/day free (search = 100 units, comment list = 1 unit/page).
-- Next step: History screen (step 11) — backend already done, purely frontend work. Follow-up endpoint (step 12) and follow-up chat UI (step 13) come after.
-- **Current graph is a pipeline, not an agent** — `tavily → sentiment → gemini → END`. No conditional edges, no LLM decision-making, no loops. The Planner and Researcher nodes that make it truly agentic will be added in steps 13–14.
+- Next step: Follow-up endpoint (step 12) — add auth guard, 5-follow-up cap, load `raw_context`, call synthesizer, persist `FollowUp` row. Follow-up chat UI (step 13) comes after.
+- **Current graph is a pipeline, not an agent** — `tavily → sentiment → gemini → END`. No conditional edges, no LLM decision-making, no loops. The Planner and Researcher nodes that make it truly agentic will be added in steps 14–15.
 
 ## Build order
 1. Postgres schema + Alembic migrations (done)
@@ -36,7 +37,7 @@ frontend/  Next.js 16 (TypeScript)
 8. Next.js frontend — prompt screen + progress polling (done)
 9. Next.js frontend — chat screen (report card display, no follow-ups yet) (done)
 10. Synthesizer prompt iteration — skipped for now, output quality acceptable
-11. Next.js frontend — history screen
+11. Next.js frontend — history screen (done)
 12. Follow-up endpoint
 13. Next.js frontend — follow-up chat UI
 14. Add Planner node — LLM decides how to decompose the query (introduces true agentic behaviour)
