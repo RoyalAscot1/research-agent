@@ -68,7 +68,6 @@ async def get_report(
         "overall_sentiment": report.overall_sentiment,
         "source_count": report.source_count,
         "sources": sources,
-        "suggested_followups": report.suggested_followups,
         "created_at": report.created_at,
         "completed_in_seconds": completed_in_seconds,
         "follow_ups": [

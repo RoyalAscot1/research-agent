@@ -16,7 +16,7 @@ Lens is a web app that lets users ask natural language research questions and re
    - AI-written summary (3–4 paragraphs combining facts and sentiment)
    - Source cards showing title, domain, and publish date — hidden if no sources available
    - Below the report: a chat input for follow-up questions
-   - Up to 5 follow-up questions allowed. After 5, the input is disabled with a "Start a new query" message.
+   - Up to 5 follow-up questions allowed. After 5, the input is replaced with a "Follow-up limit reached (5/5)" message.
 5. **History screen** — list of all past queries with sentiment badge (Positive / Mixed / Negative), date, and run time. Click any row to reopen the full report and follow-up thread (read-only). Delete individual entries or clear all.
 
 ---
@@ -257,7 +257,7 @@ Incorporate this sentiment signal where relevant — note whether public opinion
 10. Synthesizer prompt iteration — run 20+ real queries in the browser, refine until quality is consistent (skipped for now — output quality acceptable)
 11. Next.js frontend — history screen (done)
 12. Follow-up endpoint (done)
-13. Next.js frontend — follow-up chat UI
+13. Next.js frontend — follow-up chat UI (done)
 14. Configure LangSmith — set up tracing before adding agentic nodes so every graph execution is observable from day one
 15. Add Planner node — LLM decides how to decompose the query and whether to run sentiment (introduces true agentic behaviour via conditional edges)
 16. Add Researcher node + pgvector — semantic chunk storage in `document_chunks`, re-plan loop (max 3 iterations, 5 Tavily calls hard cap)

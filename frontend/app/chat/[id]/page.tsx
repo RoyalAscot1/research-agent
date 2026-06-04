@@ -3,7 +3,7 @@
 import { use, useState, useEffect } from 'react'
 import { useAuth } from '@clerk/nextjs'
 import { useRouter } from 'next/navigation'
-import { motion } from 'framer-motion'
+import { motion, AnimatePresence } from 'framer-motion'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import type { Components } from 'react-markdown'
@@ -142,6 +142,11 @@ export default function ChatPage({ params }: { params: Promise<{ id: string }> }
   const [report, setReport] = useState<ReportData | null>(null)
   const [pageState, setPageState] = useState<'loading' | 'loaded' | 'error'>('loading')
   const [copied, setCopied] = useState(false)
+  const [followUps, setFollowUps] = useState<Array<{ question: string; answer: string | null; turn_number: number }>>([])
+  const [question, setQuestion] = useState('')
+  const [submitting, setSubmitting] = useState(false)
+  const [limitReached, setLimitReached] = useState(false)
+  const [followUpError, setFollowUpError] = useState<string | null>(null)
 
   useEffect(() => {
     if (!isLoaded) return
@@ -152,7 +157,12 @@ export default function ChatPage({ params }: { params: Promise<{ id: string }> }
       if (!token || cancelled) return
       try {
         const data = await api.getReport(token, id)
-        if (!cancelled) { setReport(data); setPageState('loaded') }
+        if (!cancelled) {
+          setReport(data)
+          setFollowUps(data.follow_ups)
+          if (data.follow_ups.length >= 5) setLimitReached(true)
+          setPageState('loaded')
+        }
       } catch {
         if (!cancelled) setPageState('error')
       }
@@ -176,6 +186,40 @@ export default function ChatPage({ params }: { params: Promise<{ id: string }> }
     a.download = `lens-report.md`
     a.click()
     URL.revokeObjectURL(url)
+  }
+
+  const handleFollowUp = async () => {
+    const trimmed = question.trim()
+    if (!trimmed || submitting || limitReached) return
+
+    const token = await resolveToken(getToken)
+    if (!token) return
+
+    setFollowUpError(null)
+    const optimisticTurn = { question: trimmed, answer: null, turn_number: followUps.length + 1 }
+    setFollowUps(prev => [...prev, optimisticTurn])
+    setQuestion('')
+    setSubmitting(true)
+
+    try {
+      const res = await api.createFollowup(token, id, trimmed)
+      setFollowUps(prev =>
+        prev.map(fu => fu.turn_number === res.turn_number ? { ...fu, answer: res.answer } : fu)
+      )
+      if (res.turn_number >= 5) setLimitReached(true)
+    } catch (err: unknown) {
+      const status = err instanceof Error ? parseInt(err.message.match(/\d{3}/)?.[0] ?? '0') : 0
+      if (status === 429) {
+        setLimitReached(true)
+        setFollowUps(prev => prev.filter(fu => fu.turn_number !== optimisticTurn.turn_number))
+      } else {
+        setFollowUps(prev => prev.filter(fu => fu.turn_number !== optimisticTurn.turn_number))
+        setQuestion(trimmed)
+        setFollowUpError('Something went wrong. Please try again.')
+      }
+    } finally {
+      setSubmitting(false)
+    }
   }
 
   if (!isLoaded || pageState === 'loading') {
@@ -298,22 +342,78 @@ export default function ChatPage({ params }: { params: Promise<{ id: string }> }
             </motion.div>
           )}
 
-          {/* Suggested follow-ups */}
-          {report.suggested_followups && report.suggested_followups.length > 0 && (
-            <motion.div variants={item} className="space-y-3 pt-1">
-              <p className="text-xs text-white/35 tracking-wide uppercase">Suggested follow-ups</p>
-              <div className="flex flex-wrap gap-2">
-                {report.suggested_followups.map((q, i) => (
-                  <button
-                    key={i}
-                    className="rounded-full border border-white/[0.08] bg-white/[0.04] px-4 py-1.5 text-xs text-white/50 hover:text-white/75 hover:bg-white/[0.07] transition-colors"
-                  >
-                    {q}
-                  </button>
-                ))}
-              </div>
+          {/* Follow-up Q&A thread */}
+          {followUps.length > 0 && (
+            <motion.div variants={item} className="space-y-4 pt-1">
+              <p className="text-xs text-white/35 tracking-wide uppercase">Follow-ups</p>
+              {followUps.map((fu) => (
+                <div key={fu.turn_number} className="space-y-2">
+                  <div className="flex justify-end">
+                    <div className="max-w-[80%] rounded-2xl rounded-br-sm bg-violet-600/20 border border-violet-500/20 px-4 py-2.5">
+                      <p className="text-sm text-white/80">{fu.question}</p>
+                    </div>
+                  </div>
+                  <div className="rounded-2xl border border-white/[0.07] bg-white/[0.03] backdrop-blur-sm px-6 py-4">
+                    <AnimatePresence mode="wait">
+                      {fu.answer == null
+                        ? <motion.div
+                            key="thinking"
+                            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+                            transition={{ duration: 0.2 }}
+                            className="flex items-center gap-2"
+                          >
+                            <div className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-violet-400 border-t-transparent" />
+                            <span className="text-xs text-white/35">Thinking…</span>
+                          </motion.div>
+                        : <motion.div
+                            key="answer"
+                            initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
+                            transition={{ duration: 0.45, ease: 'easeOut' }}
+                          >
+                            <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>
+                              {fu.answer}
+                            </ReactMarkdown>
+                          </motion.div>
+                      }
+                    </AnimatePresence>
+                  </div>
+                </div>
+              ))}
             </motion.div>
           )}
+
+          {/* Follow-up input */}
+          <motion.div variants={item} className="space-y-2">
+            {limitReached
+              ? <p className="text-center text-xs text-white/30">Follow-up limit reached (5/5)</p>
+              : (
+                <div className="flex items-center gap-2 rounded-2xl border border-white/[0.09] bg-white/[0.04] px-4 py-3 focus-within:border-violet-500/40 transition-colors">
+                  <input
+                    type="text"
+                    value={question}
+                    onChange={e => setQuestion(e.target.value)}
+                    onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleFollowUp() } }}
+                    placeholder="Ask a follow-up…"
+                    disabled={submitting}
+                    className="flex-1 bg-transparent text-sm text-white/80 placeholder-white/25 outline-none disabled:opacity-50"
+                  />
+                  <button
+                    onClick={handleFollowUp}
+                    disabled={submitting || !question.trim()}
+                    className="flex h-7 w-7 items-center justify-center rounded-lg bg-violet-600 text-white transition-opacity disabled:opacity-30 hover:bg-violet-500"
+                  >
+                    {submitting
+                      ? <div className="h-3 w-3 animate-spin rounded-full border-2 border-white border-t-transparent" />
+                      : <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" className="h-3.5 w-3.5"><path d="M2.87 2.298a.75.75 0 0 0-.812 1.021L3.39 6.624a1 1 0 0 0 .928.626H8.25a.75.75 0 0 1 0 1.5H4.318a1 1 0 0 0-.927.626l-1.333 3.305a.75.75 0 0 0 .812 1.021l11.25-4.25a.75.75 0 0 0 0-1.398L2.87 2.298Z" /></svg>
+                    }
+                  </button>
+                </div>
+              )
+            }
+            {followUpError && (
+              <p className="text-center text-xs text-rose-400/70">{followUpError}</p>
+            )}
+          </motion.div>
 
           <div className="h-8" />
         </motion.div>

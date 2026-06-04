@@ -25,7 +25,6 @@ export interface ReportData {
   overall_sentiment: "Positive" | "Mixed" | "Negative" | null;
   source_count: number | null;
   sources: ReportSource[];
-  suggested_followups: string[] | null;
   created_at: string;
   completed_in_seconds: number | null;
   follow_ups: Array<{
