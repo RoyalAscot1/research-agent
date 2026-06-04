@@ -182,7 +182,8 @@ You are a research planner. Given a user query, decide how to research it effect
 {query}
 
 ## Instructions
-1. Decompose the query into 1–3 focused, specific search queries for a web search engine.
+1. Decompose the query into focused, specific search queries for a web search engine.
+   - Default to 1–2 sub-questions. Use 3 only if the query genuinely requires multiple distinct angles.
    - Prefer precision over breadth — a narrow query returns better results than a broad one.
    - If the query is already specific, a single search query is fine.
    - Do not repeat the same query with minor wording changes.
