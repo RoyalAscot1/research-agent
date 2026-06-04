@@ -20,13 +20,13 @@ frontend/  Next.js 16 (TypeScript)
 - Design: dark-first (Space Grotesk font, deep navy background, violet accent). Animated gradient mesh (three drifting blobs via CSS keyframes) + SVG grain texture. Glassmorphism card with animated violet border glow on focus. Gradient wordmark. Framer Motion staggered entrance + AnimatePresence state transitions + spring-physics buttons. Typewriter placeholder.
 - Database: Neon Postgres live — 5 tables (`users`, `research_jobs`, `reports`, `follow_ups`, `alembic_version`). Alembic owns all migrations; Prisma mirrors via `db pull`.
 - Auth: Clerk (`@clerk/nextjs`) — `middleware.ts` and `ClerkProvider` in layout wired up, Google sign-in working, DB cleaned up (NextAuth tables dropped, `clerk_user_id` on `users`). Backend verifies Clerk JWTs and upserts users on first request (`app/auth.py`).
-- LangGraph: three-node graph live (`app/graph/graph.py`) — `tavily_node` fetches web results (basic search depth, 8 results), `sentiment_node` fetches top YouTube comments and scores them with VADER (positive/neutral/negative), `gemini_node` synthesises everything into a markdown report with `[Source N]` citations and a Public Sentiment section. Sources, sentiment scores, comment volume, and overall_sentiment persisted to the `reports` row. `run_graph` runs as a FastAPI `BackgroundTasks` task — pending → running → done/failed. `call_gemini_followup()` is a standalone exported async function used by the follow-up endpoint — takes query, report_markdown, sources, prior_turns, and question; returns a markdown answer string.
+- LangGraph: four-node agentic graph live (`app/graph/graph.py`) — `planner_node` uses Gemini structured output (`ResearchPlan`) to decide query decomposition (1–3 Tavily sub-queries), whether to run sentiment (`run_sentiment: bool`), and a dedicated YouTube search query (`youtube_search_query`). `tavily_node` loops over `search_queries`, merges and deduplicates results by URL. `sentiment_node` fetches top YouTube comments using `youtube_search_query` and scores them with VADER. `synthesizer_node` assembles the final markdown report. Conditional edge after `tavily_node` skips `sentiment_node` for technical/factual queries. `planner_node` falls back to raw query + `run_sentiment=False` if structured output fails. `call_gemini_followup()` is a standalone exported async function used by the follow-up endpoint.
 - `GET /reports/{report_id}` returns `query` (from job), `sources` (array from `raw_context`), and `completed_in_seconds` in addition to existing fields.
 - Tavily `search_depth` is temporarily `"basic"` (1 credit/search) to conserve credits during development — switch to `"advanced"` before shipping.
 - YouTube API key required (`YOUTUBE_API_KEY` in `backend/.env`) — enable YouTube Data API v3 in Google Cloud Console. Quota: 10k units/day free (search = 100 units, comment list = 1 unit/page).
-- Langfuse tracing live — `@observe` decorators on `run_graph`, `tavily_node`, `sentiment_node`, `gemini_node`, and `call_gemini_followup`. Credentials loaded via `Settings` (`LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_HOST`) and pushed into `os.environ` at startup in `main.py`. Uses `langfuse==4.7.1`; import is `from langfuse import observe` (not `langfuse.decorators` or `langfuse.callback`).
-- Next step: Add Planner node (step 15) — LLM decides query decomposition + whether to run sentiment (introduces true agentic behaviour).
-- **Current graph is a pipeline, not an agent** — `tavily → sentiment → gemini → END`. No conditional edges, no LLM decision-making, no loops. The Planner and Researcher nodes that make it truly agentic will be added in steps 15–16.
+- Langfuse tracing live — `@observe` decorators on `run_graph`, `planner_node`, `tavily_node`, `sentiment_node`, `synthesizer_node`, and `call_gemini_followup`. Credentials loaded via `Settings` (`LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_HOST`) and pushed into `os.environ` at startup in `main.py`. Uses `langfuse==4.7.1`; import is `from langfuse import observe` (not `langfuse.decorators` or `langfuse.callback`).
+- Next step: Add Researcher node + pgvector (step 16) — `document_chunks` table, chunk + embed Tavily results, re-plan loop (max 3 iterations, 5 Tavily calls hard cap).
+- **Current graph is a true agent** — `planner → tavily → [conditional] → sentiment? → synthesizer → END`. Planner uses LLM decision-making via structured output; conditional edges branch based on query type.
 
 ## Build order
 1. Postgres schema + Alembic migrations (done)
@@ -43,7 +43,7 @@ frontend/  Next.js 16 (TypeScript)
 12. Follow-up endpoint (done)
 13. Next.js frontend — follow-up chat UI (done)
 14. Configure Langfuse — tracing before agentic nodes (done)
-15. Add Planner node — LLM decides query decomposition + whether to run sentiment (introduces true agentic behaviour)
+15. Add Planner node — LLM decides query decomposition + whether to run sentiment (done)
 16. Add Researcher node + pgvector — `document_chunks` table, re-plan loop (max 3 iterations, 5 Tavily calls hard cap)
 17. Docker + GitHub Actions + Render deploy
 18. Redis caching (post-v1)
@@ -87,7 +87,7 @@ frontend/  Next.js 16 (TypeScript)
 - Graph lives in `backend/app/graph/graph.py` — `run_graph` is the entry point called by `BackgroundTasks`
 - Uses `gemini-3.1-flash-lite-preview` (not 1.5-flash — that model is unavailable on the current API key)
 - `run_graph` opens its own `AsyncSessionLocal` session — it runs outside any request context so it cannot use the request-scoped `get_db` dependency
-- `tavily_node`, `sentiment_node`, and `gemini_node` catch exceptions internally. `tavily_node` and `sentiment_node` failures are non-fatal — the graph continues with empty sources/sentiment. `gemini_node` failures set `state["error"]` which flips the job to `failed`.
+- `planner_node` falls back to raw query + `run_sentiment=False` on structured output failure. `tavily_node` and `sentiment_node` failures are non-fatal — the graph continues with empty sources/sentiment. `synthesizer_node` failures set `state["error"]` which flips the job to `failed`.
 - Outer `run_graph` wraps the full body in try/except to flip status to `failed` on DB errors after `status = "running"`.
 
 

@@ -6,6 +6,7 @@ from googleapiclient.discovery import build
 from langchain_core.messages import HumanMessage
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langgraph.graph import END, StateGraph
+from pydantic import BaseModel, Field
 from tavily import TavilyClient
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 from langfuse import observe
@@ -15,10 +16,27 @@ from app.database import AsyncSessionLocal
 from app.models.models import Report, ResearchJob
 
 
+class ResearchPlan(BaseModel):
+    search_queries: list[str] = Field(
+        description="1 to 3 focused search queries to send to Tavily. Decompose the user query into specific, searchable sub-questions.",
+        min_length=1,
+        max_length=3,
+    )
+    run_sentiment: bool = Field(
+        description="True if YouTube public sentiment is relevant to this query (opinion, product, event, public figure). False for factual, technical, or academic queries."
+    )
+    youtube_search_query: str = Field(
+        description="A concise, specific YouTube search query to find popular videos with many comments on the topic. Optimise for discoverability — use the most commonly searched form of the topic, not the user's exact wording."
+    )
+
+
 class GraphState(TypedDict):
     job_id: str
     user_id: str
     query: str
+    search_queries: list[str] | None
+    run_sentiment: bool | None
+    youtube_search_query: str | None
     sources: list[dict] | None
     sentiment_scores: dict | None       # {"positive": float, "neutral": float, "negative": float}
     sentiment_volume: int | None        # number of comments analysed
@@ -157,18 +175,77 @@ def _derive_overall_sentiment(scores: dict | None) -> str | None:
 # Nodes
 # ---------------------------------------------------------------------------
 
+_PLANNER_PROMPT = """\
+You are a research planner. Given a user query, decide how to research it effectively.
+
+## User Query
+{query}
+
+## Instructions
+1. Decompose the query into 1–3 focused, specific search queries for a web search engine.
+   - Prefer precision over breadth — a narrow query returns better results than a broad one.
+   - If the query is already specific, a single search query is fine.
+   - Do not repeat the same query with minor wording changes.
+
+2. Decide whether YouTube public sentiment is relevant.
+   - Set run_sentiment=true for: product reviews, public figures, movies/TV/music, political topics, consumer brands, events with public opinion.
+   - Set run_sentiment=false for: technical documentation, academic topics, factual lookups, coding questions, scientific concepts.\
+"""
+
+
+@observe()
+async def planner_node(state: GraphState) -> GraphState:
+    llm = ChatGoogleGenerativeAI(
+        model="gemini-3.1-flash-lite-preview",
+        google_api_key=settings.gemini_api_key,
+    ).with_structured_output(ResearchPlan)
+
+    prompt = _PLANNER_PROMPT.format(query=state["query"])
+
+    try:
+        plan: ResearchPlan = await llm.ainvoke([HumanMessage(content=prompt)])
+        return {
+            **state,
+            "search_queries": plan.search_queries,
+            "run_sentiment": plan.run_sentiment,
+            "youtube_search_query": plan.youtube_search_query,
+        }
+    except Exception:
+        # Fall back to using the raw query as a single search and skipping sentiment
+        return {
+            **state,
+            "search_queries": [state["query"]],
+            "run_sentiment": False,
+            "youtube_search_query": state["query"],
+        }
+
+
 @observe()
 async def tavily_node(state: GraphState) -> GraphState:
     try:
         client = TavilyClient(api_key=settings.tavily_api_key)
-        response = client.search(
-            query=state["query"],
-            search_depth="basic",
-            max_results=8,
-            include_answer=False,
-        )
-        sources = response.get("results", [])
-        return {**state, "sources": sources, "error": None}
+        search_queries = state.get("search_queries") or [state["query"]]
+
+        seen_urls: set[str] = set()
+        merged: list[dict] = []
+
+        for q in search_queries:
+            try:
+                response = client.search(
+                    query=q,
+                    search_depth="basic",
+                    max_results=8,
+                    include_answer=False,
+                )
+                for result in response.get("results", []):
+                    url = result.get("url", "")
+                    if url and url not in seen_urls:
+                        seen_urls.add(url)
+                        merged.append(result)
+            except Exception:
+                continue
+
+        return {**state, "sources": merged, "error": None}
     except Exception:
         # Non-fatal: proceed without sources
         return {**state, "sources": [], "error": None}
@@ -184,8 +261,9 @@ async def sentiment_node(state: GraphState) -> GraphState:
         youtube = build("youtube", "v3", developerKey=settings.youtube_api_key)
 
         # Step 1: search for top 5 relevant videos
+        yt_query = state.get("youtube_search_query") or state["query"]
         search_response = youtube.search().list(
-            q=state["query"],
+            q=yt_query,
             part="id",
             type="video",
             maxResults=5,
@@ -259,7 +337,7 @@ async def sentiment_node(state: GraphState) -> GraphState:
 
 
 @observe()
-async def gemini_node(state: GraphState) -> GraphState:
+async def synthesizer_node(state: GraphState) -> GraphState:
     llm = ChatGoogleGenerativeAI(
         model="gemini-3.1-flash-lite-preview",
         google_api_key=settings.gemini_api_key,
@@ -293,15 +371,21 @@ async def gemini_node(state: GraphState) -> GraphState:
 # Graph
 # ---------------------------------------------------------------------------
 
+def _route_after_tavily(state: GraphState) -> str:
+    return "sentiment" if state.get("run_sentiment") else "synthesizer"
+
+
 def _build_graph():
     g = StateGraph(GraphState)
+    g.add_node("planner", planner_node)
     g.add_node("tavily", tavily_node)
     g.add_node("sentiment", sentiment_node)
-    g.add_node("gemini", gemini_node)
-    g.set_entry_point("tavily")
-    g.add_edge("tavily", "sentiment")
-    g.add_edge("sentiment", "gemini")
-    g.add_edge("gemini", END)
+    g.add_node("synthesizer", synthesizer_node)
+    g.set_entry_point("planner")
+    g.add_edge("planner", "tavily")
+    g.add_conditional_edges("tavily", _route_after_tavily, {"sentiment": "sentiment", "synthesizer": "synthesizer"})
+    g.add_edge("sentiment", "synthesizer")
+    g.add_edge("synthesizer", END)
     return g.compile()
 
 
@@ -324,6 +408,9 @@ async def run_graph(job_id: str, user_id: str, query: str) -> None:
                     "job_id": job_id,
                     "user_id": user_id,
                     "query": query,
+                    "search_queries": None,
+                    "run_sentiment": None,
+                    "youtube_search_query": None,
                     "sources": None,
                     "sentiment_scores": None,
                     "sentiment_volume": None,

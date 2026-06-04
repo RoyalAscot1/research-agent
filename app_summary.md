@@ -259,7 +259,7 @@ Incorporate this sentiment signal where relevant — note whether public opinion
 12. Follow-up endpoint (done)
 13. Next.js frontend — follow-up chat UI (done)
 14. Configure Langfuse — set up tracing before adding agentic nodes so every graph execution is observable from day one (done)
-15. Add Planner node — LLM decides how to decompose the query and whether to run sentiment (introduces true agentic behaviour via conditional edges)
+15. Add Planner node — LLM decides how to decompose the query and whether to run sentiment (done)
 16. Add Researcher node + pgvector — semantic chunk storage in `document_chunks`, re-plan loop (max 3 iterations, 5 Tavily calls hard cap)
 17. Docker + GitHub Actions + Render deploy
 18. Redis caching (post-v1)
