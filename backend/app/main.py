@@ -1,8 +1,15 @@
+import os
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
 from app.routers import history, jobs, queries, reports
+
+if settings.langfuse_public_key:
+    os.environ["LANGFUSE_PUBLIC_KEY"] = settings.langfuse_public_key
+    os.environ["LANGFUSE_SECRET_KEY"] = settings.langfuse_secret_key or ""
+    os.environ["LANGFUSE_HOST"] = settings.langfuse_host
 
 app = FastAPI(title="Lens API", version="0.1.0")
 

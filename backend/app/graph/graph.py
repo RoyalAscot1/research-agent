@@ -8,6 +8,7 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from langgraph.graph import END, StateGraph
 from tavily import TavilyClient
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
+from langfuse import observe
 
 from app.config import settings
 from app.database import AsyncSessionLocal
@@ -107,6 +108,7 @@ Use markdown formatting. Cite sources as [Source N] where applicable.\
 """
 
 
+@observe()
 async def call_gemini_followup(
     query: str,
     report_markdown: str,
@@ -155,6 +157,7 @@ def _derive_overall_sentiment(scores: dict | None) -> str | None:
 # Nodes
 # ---------------------------------------------------------------------------
 
+@observe()
 async def tavily_node(state: GraphState) -> GraphState:
     try:
         client = TavilyClient(api_key=settings.tavily_api_key)
@@ -171,6 +174,7 @@ async def tavily_node(state: GraphState) -> GraphState:
         return {**state, "sources": [], "error": None}
 
 
+@observe()
 async def sentiment_node(state: GraphState) -> GraphState:
     """
     Fetches top YouTube comments for the query and scores them with VADER.
@@ -254,6 +258,7 @@ async def sentiment_node(state: GraphState) -> GraphState:
         return {**state, "sentiment_scores": None, "sentiment_volume": None}
 
 
+@observe()
 async def gemini_node(state: GraphState) -> GraphState:
     llm = ChatGoogleGenerativeAI(
         model="gemini-3.1-flash-lite-preview",
@@ -303,6 +308,7 @@ def _build_graph():
 _graph = _build_graph()
 
 
+@observe()
 async def run_graph(job_id: str, user_id: str, query: str) -> None:
     async with AsyncSessionLocal() as db:
         job = await db.get(ResearchJob, uuid.UUID(job_id))
