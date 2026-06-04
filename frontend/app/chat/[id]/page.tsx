@@ -209,14 +209,22 @@ export default function ChatPage({ params }: { params: Promise<{ id: string }> }
       <Background />
 
       {/* Nav */}
-      <header className="sticky top-0 z-20 flex items-center justify-between px-6 py-3.5 border-b border-white/[0.06] bg-[oklch(0.08_0.018_265/0.9)] backdrop-blur-md">
-        <button
-          onClick={() => router.push('/')}
-          className="flex items-center gap-2 text-sm font-medium text-white/65 hover:text-white/90 transition-colors"
-        >
-          <Search className="h-3.5 w-3.5" />
-          Lens
-        </button>
+      <header className="sticky top-0 z-20 flex items-center justify-between px-6 py-3.5">
+        <div className="flex items-center gap-4">
+          <button
+            onClick={() => router.push('/')}
+            className="flex items-center gap-2 text-sm font-medium text-white/65 hover:text-white/90 transition-colors"
+          >
+            <Search className="h-3.5 w-3.5" />
+            Lens
+          </button>
+          <button
+            onClick={() => router.push('/history')}
+            className="text-sm text-white/40 hover:text-white/70 transition-colors"
+          >
+            History
+          </button>
+        </div>
         <div className="flex items-center gap-1">
           {report.completed_in_seconds != null && (
             <span className="mr-2 text-xs text-white/30 select-none">

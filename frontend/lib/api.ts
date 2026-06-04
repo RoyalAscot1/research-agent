@@ -1,3 +1,11 @@
+export interface HistoryItem {
+  report_id: string;
+  job_id: string;
+  query: string;
+  overall_sentiment: "Positive" | "Mixed" | "Negative" | null;
+  created_at: string;
+}
+
 export interface ReportSource {
   title: string;
   url: string;
@@ -39,6 +47,7 @@ async function apiFetch<T>(path: string, token: string, init?: RequestInit): Pro
     },
   });
   if (!res.ok) throw new Error(`API error ${res.status}: ${await res.text()}`);
+  if (res.status === 204 || res.headers.get('content-length') === '0') return undefined as T;
   return res.json() as Promise<T>;
 }
 
@@ -66,7 +75,7 @@ export const api = {
     ),
 
   getHistory: (token: string) =>
-    apiFetch<{ reports: unknown[] }>("/history", token),
+    apiFetch<{ reports: HistoryItem[] }>("/history", token),
 
   deleteReport: (token: string, reportId: string) =>
     apiFetch<void>(`/history/${reportId}`, token, { method: "DELETE" }),

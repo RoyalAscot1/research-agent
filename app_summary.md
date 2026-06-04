@@ -243,7 +243,7 @@ Sentiment note: [Hand-crafted summary of nuances the aggregate score misses]
 8. Next.js frontend — prompt screen + progress polling (done)
 9. Next.js frontend — chat screen (report card display, no follow-ups yet) (done)
 10. Synthesizer prompt iteration — run 20+ real queries in the browser, refine until quality is consistent (skipped for now — output quality acceptable)
-11. Next.js frontend — history screen
+11. Next.js frontend — history screen (done)
 12. Follow-up endpoint
 13. Next.js frontend — follow-up chat UI
 14. Add Planner node — LLM decides how to decompose the query and which tools to call (introduces true agentic behaviour via conditional edges)
