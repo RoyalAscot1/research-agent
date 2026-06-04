@@ -87,6 +87,59 @@ def _format_sentiment_section(scores: dict | None, volume: int | None) -> str:
     )
 
 
+_FOLLOWUP_PROMPT = """\
+You are a research assistant helping a user dig deeper into a topic.
+
+## Original Query
+{query}
+
+## Research Report
+{report_markdown}
+
+## Sources
+{sources}
+
+{prior_turns}## Follow-up Question
+{question}
+
+Answer the follow-up question thoroughly, referencing the report and sources where relevant. \
+Use markdown formatting. Cite sources as [Source N] where applicable.\
+"""
+
+
+async def call_gemini_followup(
+    query: str,
+    report_markdown: str,
+    sources: list[dict],
+    prior_turns: list[dict],
+    question: str,
+) -> str:
+    """Call Gemini to answer a follow-up question given the original report context."""
+    llm = ChatGoogleGenerativeAI(
+        model="gemini-3.1-flash-lite-preview",
+        google_api_key=settings.gemini_api_key,
+    )
+
+    prior_block = ""
+    if prior_turns:
+        lines = ["## Prior Conversation\n"]
+        for turn in prior_turns:
+            lines.append(f"**Q{turn['turn_number']}:** {turn['question']}\n")
+            lines.append(f"**A{turn['turn_number']}:** {turn['answer']}\n\n")
+        prior_block = "".join(lines)
+
+    prompt = _FOLLOWUP_PROMPT.format(
+        query=query,
+        report_markdown=report_markdown,
+        sources=_format_sources(sources) if sources else "No sources available.",
+        prior_turns=prior_block,
+        question=question,
+    )
+
+    response = await llm.ainvoke([HumanMessage(content=prompt)])
+    return response.content
+
+
 def _derive_overall_sentiment(scores: dict | None) -> str | None:
     """Positive if positive% > 55%, Negative if negative% > 30%, else Mixed."""
     if not scores:

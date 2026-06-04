@@ -16,7 +16,7 @@ Lens is a web app that lets users ask natural language research questions and re
    - AI-written summary (3–4 paragraphs combining facts and sentiment)
    - Source cards showing title, domain, and publish date — hidden if no sources available
    - Below the report: a chat input for follow-up questions
-   - Up to 5 follow-up questions allowed. After 5, the input is disabled with a "Start a new query" message.
+   - Up to 5 follow-up questions allowed. After 5, the input is replaced with a "Follow-up limit reached (5/5)" message.
 5. **History screen** — list of all past queries with sentiment badge (Positive / Mixed / Negative), date, and run time. Click any row to reopen the full report and follow-up thread (read-only). Delete individual entries or clear all.
 
 ---
@@ -197,13 +197,13 @@ Planner → Researcher → Sentiment → Synthesizer
 Follow-ups do NOT re-run the full agent graph. They re-use existing research context.
 
 **v1 (steps 12–13) — stateless re-synthesis from `raw_context`:**
-1. Verify Clerk JWT
-2. Count existing `follow_ups` rows — reject with 403 if ≥ 5
-3. Load `raw_context` from Postgres
-4. Load all prior follow-up Q&A pairs for conversation history
-5. Pass `raw_context` + conversation history + new question to Gemini (synthesizer only)
-6. Save the answer to `follow_ups` table
-7. Return answer — typically responds in ~3 seconds
+1. Verify Clerk JWT + ownership check (403 if report belongs to another user)
+2. Count existing `follow_ups` rows — reject with 429 if ≥ 5
+3. Load `raw_context` from Postgres (Tavily sources stored as JSONB)
+4. Load all prior follow-up Q&A pairs ordered by `turn_number` for conversation history
+5. Pass original query + report_markdown + sources + conversation history + new question to `call_gemini_followup()` in `graph.py`
+6. Save the answer to `follow_ups` table with `turn_number = existing_count + 1`
+7. Return `{answer, turn_number}` — typically responds in ~3 seconds
 
 **v2 (post step 15) — pgvector semantic retrieval:**
 1–2 same as above
@@ -256,8 +256,8 @@ Incorporate this sentiment signal where relevant — note whether public opinion
 9. Next.js frontend — chat screen (report card display, no follow-ups yet) (done)
 10. Synthesizer prompt iteration — run 20+ real queries in the browser, refine until quality is consistent (skipped for now — output quality acceptable)
 11. Next.js frontend — history screen (done)
-12. Follow-up endpoint
-13. Next.js frontend — follow-up chat UI
+12. Follow-up endpoint (done)
+13. Next.js frontend — follow-up chat UI (done)
 14. Configure LangSmith — set up tracing before adding agentic nodes so every graph execution is observable from day one
 15. Add Planner node — LLM decides how to decompose the query and whether to run sentiment (introduces true agentic behaviour via conditional edges)
 16. Add Researcher node + pgvector — semantic chunk storage in `document_chunks`, re-plan loop (max 3 iterations, 5 Tavily calls hard cap)

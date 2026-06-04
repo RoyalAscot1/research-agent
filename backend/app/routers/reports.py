@@ -2,11 +2,12 @@ import uuid
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import get_current_user
 from app.database import get_db
+from app.graph.graph import call_gemini_followup
 from app.models.models import FollowUp, Report, ResearchJob, User
 
 router = APIRouter(tags=["reports"])
@@ -22,7 +23,11 @@ async def get_report(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    report = await db.get(Report, uuid.UUID(report_id))
+    try:
+        rid = uuid.UUID(report_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Report not found")
+    report = await db.get(Report, rid)
     if not report:
         raise HTTPException(status_code=404, detail="Report not found")
     if report.user_id != current_user.id:
@@ -63,7 +68,6 @@ async def get_report(
         "overall_sentiment": report.overall_sentiment,
         "source_count": report.source_count,
         "sources": sources,
-        "suggested_followups": report.suggested_followups,
         "created_at": report.created_at,
         "completed_in_seconds": completed_in_seconds,
         "follow_ups": [
@@ -82,6 +86,62 @@ async def create_followup(
     report_id: str,
     body: FollowUpRequest,
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
-    # TODO: enforce 5-followup cap, load raw_context, call synthesizer node (step 11)
-    return {"answer": "stub answer", "turn_number": 1}
+    # Load and authorise
+    try:
+        rid = uuid.UUID(report_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Report not found")
+    report = await db.get(Report, rid)
+    if not report:
+        raise HTTPException(status_code=404, detail="Report not found")
+    if report.user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    # Enforce 5-follow-up cap
+    count_result = await db.execute(
+        select(func.count()).where(FollowUp.report_id == report.id)
+    )
+    existing_count = count_result.scalar_one()
+    if existing_count >= 5:
+        raise HTTPException(status_code=429, detail="Follow-up limit reached (5 max)")
+
+    # Load job for original query
+    job = await db.get(ResearchJob, report.job_id)
+    query = job.query if job else ""
+
+    # Load prior turns for conversation history
+    prior_result = await db.execute(
+        select(FollowUp)
+        .where(FollowUp.report_id == report.id)
+        .order_by(FollowUp.turn_number)
+    )
+    prior_turns = [
+        {"turn_number": fu.turn_number, "question": fu.question, "answer": fu.answer}
+        for fu in prior_result.scalars().all()
+    ]
+
+    # Call Gemini
+    answer = await call_gemini_followup(
+        query=query,
+        report_markdown=report.report_markdown or "",
+        sources=report.raw_context or [],
+        prior_turns=prior_turns,
+        question=body.question,
+    )
+
+    # Persist
+    turn_number = existing_count + 1
+    follow_up = FollowUp(
+        id=uuid.uuid4(),
+        report_id=report.id,
+        user_id=current_user.id,
+        question=body.question,
+        answer=answer,
+        turn_number=turn_number,
+    )
+    db.add(follow_up)
+    await db.commit()
+
+    return {"answer": answer, "turn_number": turn_number}
