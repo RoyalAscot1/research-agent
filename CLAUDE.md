@@ -24,8 +24,9 @@ frontend/  Next.js 16 (TypeScript)
 - `GET /reports/{report_id}` returns `query` (from job), `sources` (array from `raw_context`), and `completed_in_seconds` in addition to existing fields.
 - Tavily `search_depth` is temporarily `"basic"` (1 credit/search) to conserve credits during development — switch to `"advanced"` before shipping.
 - YouTube API key required (`YOUTUBE_API_KEY` in `backend/.env`) — enable YouTube Data API v3 in Google Cloud Console. Quota: 10k units/day free (search = 100 units, comment list = 1 unit/page).
-- Next step: Configure LangSmith (step 14) — set up tracing before adding agentic nodes.
-- **Current graph is a pipeline, not an agent** — `tavily → sentiment → gemini → END`. No conditional edges, no LLM decision-making, no loops. The Planner and Researcher nodes that make it truly agentic will be added in steps 14–15.
+- Langfuse tracing live — `@observe` decorators on `run_graph`, `tavily_node`, `sentiment_node`, `gemini_node`, and `call_gemini_followup`. Credentials loaded via `Settings` (`LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_HOST`) and pushed into `os.environ` at startup in `main.py`. Uses `langfuse==4.7.1`; import is `from langfuse import observe` (not `langfuse.decorators` or `langfuse.callback`).
+- Next step: Add Planner node (step 15) — LLM decides query decomposition + whether to run sentiment (introduces true agentic behaviour).
+- **Current graph is a pipeline, not an agent** — `tavily → sentiment → gemini → END`. No conditional edges, no LLM decision-making, no loops. The Planner and Researcher nodes that make it truly agentic will be added in steps 15–16.
 
 ## Build order
 1. Postgres schema + Alembic migrations (done)
@@ -41,7 +42,7 @@ frontend/  Next.js 16 (TypeScript)
 11. Next.js frontend — history screen (done)
 12. Follow-up endpoint (done)
 13. Next.js frontend — follow-up chat UI (done)
-14. Configure LangSmith — tracing before agentic nodes
+14. Configure Langfuse — tracing before agentic nodes (done)
 15. Add Planner node — LLM decides query decomposition + whether to run sentiment (introduces true agentic behaviour)
 16. Add Researcher node + pgvector — `document_chunks` table, re-plan loop (max 3 iterations, 5 Tavily calls hard cap)
 17. Docker + GitHub Actions + Render deploy
@@ -60,9 +61,9 @@ frontend/  Next.js 16 (TypeScript)
 - `middleware.ts` uses `clerkMiddleware` + `createRouteMatcher` to protect `/history` and `/chat`
 - `<ClerkProvider>` wraps the root layout
 - **Backend JWT verification**: `app/auth.py` — `get_current_user` dependency verifies the Bearer token via Clerk's JWKS endpoint (RS256), then upserts the user into Postgres. Use as a dependency on any protected endpoint.
-- **User upsert**: happens lazily on first API request — no webhook needed for local dev. A `user.created` webhook (step 14) will complement this in production.
+- **User upsert**: happens lazily on first API request — no webhook needed for local dev. A `user.created` webhook will complement this in production (deferred to step 17).
 - **`getToken()` race condition**: On first page load, `getToken()` can return `null` even when `isSignedIn` is true — the session token hasn't been cached yet. Always use the `resolveToken` helper in `app/page.tsx` (tries once, waits 350ms, retries) rather than calling `getToken()` directly. Copy this pattern to any future page that makes authenticated API calls.
-- **User deletion**: must be handled via a `user.deleted` Clerk webhook in step 14 — no code for this yet.
+- **User deletion**: must be handled via a `user.deleted` Clerk webhook — no code for this yet (deferred to step 17).
 - **`users` table column names**: Prisma created the table with camelCase columns (`createdAt`, etc.). The SQLAlchemy `User` model maps these explicitly (e.g. `Column("createdAt", ...)`). Do not rename them without an Alembic migration.
 
 ### Prisma v7
@@ -95,5 +96,5 @@ frontend/  Next.js 16 (TypeScript)
 - Alembic runs all migrations; Prisma uses `prisma db pull` to mirror changes
 
 ## Environment variables
-- Backend: `DATABASE_URL`, `GEMINI_API_KEY`, `TAVILY_API_KEY`, `YOUTUBE_API_KEY`, `CLERK_SECRET_KEY` — see `backend/.env.example`
+- Backend: `DATABASE_URL`, `GEMINI_API_KEY`, `TAVILY_API_KEY`, `YOUTUBE_API_KEY`, `CLERK_SECRET_KEY`, `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_HOST` — see `backend/.env.example`
 - Frontend: `DATABASE_URL`, `NEXT_PUBLIC_API_URL`, `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`, `CLERK_SECRET_KEY` — see `frontend/.env.local.example`

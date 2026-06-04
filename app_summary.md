@@ -156,7 +156,7 @@ DELETE /history                        Clear all history for the user
 
 ## LangGraph graph
 
-### Current state (pipeline — steps 1–6)
+### Current state (pipeline — steps 1–14)
 
 The graph is a straight-line pipeline with no agentic decision-making:
 
@@ -170,7 +170,7 @@ tavily → sentiment → gemini → END
 
 **gemini** — synthesises web results + sentiment into a markdown report with `[Source N]` citations and a Public Sentiment section.
 
-### Target state (agent — steps 13–14, post-frontend)
+### Target state (agent — steps 15–16)
 
 The graph will be extended into a true agent with conditional edges and a re-plan loop:
 
@@ -258,7 +258,7 @@ Incorporate this sentiment signal where relevant — note whether public opinion
 11. Next.js frontend — history screen (done)
 12. Follow-up endpoint (done)
 13. Next.js frontend — follow-up chat UI (done)
-14. Configure LangSmith — set up tracing before adding agentic nodes so every graph execution is observable from day one
+14. Configure Langfuse — set up tracing before adding agentic nodes so every graph execution is observable from day one (done)
 15. Add Planner node — LLM decides how to decompose the query and whether to run sentiment (introduces true agentic behaviour via conditional edges)
 16. Add Researcher node + pgvector — semantic chunk storage in `document_chunks`, re-plan loop (max 3 iterations, 5 Tavily calls hard cap)
 17. Docker + GitHub Actions + Render deploy
@@ -268,7 +268,7 @@ Incorporate this sentiment signal where relevant — note whether public opinion
 
 ## Production concerns
 
-- **LangSmith** — observability for LangGraph; visual traces of every graph execution showing node inputs/outputs and latency per node. Highest-value addition for debugging and interviews.
+- **Langfuse** — observability for LangGraph; traces of every graph execution showing node inputs/outputs and latency per node. Live via `@observe` decorators on all graph nodes and `call_gemini_followup`.
 - **Structured logging** — replace print statements with `structlog` JSON logs; every graph node should log inputs, outputs, latency, and cache hits, with a request ID threaded through for end-to-end tracing.
 - **Sentry** — two-line integration for real error tracking and alerting.
 - **Task queue** — `BackgroundTasks` runs jobs in the same process as the web server; replace with ARQ (async, fits the codebase) or Celery + Redis for any real load.
