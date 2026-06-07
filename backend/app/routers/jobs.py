@@ -17,7 +17,11 @@ async def get_job_status(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    job = await db.get(ResearchJob, uuid.UUID(job_id))
+    try:
+        jid = uuid.UUID(job_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Job not found")
+    job = await db.get(ResearchJob, jid)
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
     if job.user_id != current_user.id:
@@ -31,7 +35,7 @@ async def get_job_status(
 
     if job.status == "done":
         result = await db.execute(
-            select(Report).where(Report.job_id == uuid.UUID(job_id))
+            select(Report).where(Report.job_id == jid)
         )
         report = result.scalar_one_or_none()
         response["report_id"] = str(report.id) if report else None

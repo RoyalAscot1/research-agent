@@ -44,7 +44,11 @@ async def delete_report(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    report = await db.get(Report, uuid.UUID(report_id))
+    try:
+        rid = uuid.UUID(report_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Report not found")
+    report = await db.get(Report, rid)
     if not report:
         raise HTTPException(status_code=404, detail="Report not found")
     if report.user_id != current_user.id:

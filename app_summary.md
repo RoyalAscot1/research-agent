@@ -142,6 +142,8 @@ DELETE /history/{report_id}           Delete a report
 DELETE /history                        Clear all history for the user
 ```
 
+All endpoints with a UUID path parameter (`/jobs/{job_id}/status`, `/reports/{report_id}`, `/reports/{report_id}/followup`, `DELETE /history/{report_id}`) return **404** — not 500 — for a malformed or non-existent ID. The malformed case is guarded with `try/except ValueError` around `uuid.UUID(...)` before the DB lookup.
+
 ---
 
 ## LangGraph graph
