@@ -175,6 +175,38 @@ breaks on a production instance until you create a Google Cloud OAuth app and pl
 ID/secret into Clerk. **Decision point:** for a portfolio, a private/recorded demo on dev
 keys is much faster; do this only if you want a publicly signable-in URL. (Partly noted.)
 
+**Create & deploy the Render backend service — the actual deploy, not just prep.** Everything
+above readies the image/config; this is the step that produces a live backend URL, and it
+gates Phase 4's auto-deploy-on-merge. Concretely: (1) create a Render **Web Service** from the
+repo with `backend/` as the root and the existing `backend/Dockerfile` as the runtime; (2)
+**bind to Render's `$PORT`** — the Dockerfile currently hardcodes `--port 8000`
+(`backend/Dockerfile`, line 11), but Render injects `$PORT` and routes to it, so change the
+CMD to `--port ${PORT:-8000}` (or set Render's port to 8000) or the service won't receive
+traffic; (3) set every backend env var from `backend/.env.example` in the Render dashboard
+(`DATABASE_URL`, `GEMINI_API_KEY`, `TAVILY_API_KEY`, `YOUTUBE_API_KEY`, the `LANGFUSE_*`
+keys, and `FRONTEND_URL` set to the Vercel URL once known — they reference each other, so
+expect to circle back); (4) set the **health check path to `/health`** (the wiring item
+above); (5) add the `alembic upgrade head` release/pre-deploy command (the deploy-plumbing
+item above); (6) trigger the first deploy and confirm `GET /health` returns `200` on the live
+URL. **Sequence this after the `.dockerignore`, dropped-deps, and deploy-plumbing items** —
+they all have to be true *in the image you ship here.* (Undocumented — the prep was listed but
+the deploy action itself was missing.)
+
+**Set up the Vercel frontend project + first deploy.** The frontend has no Dockerfile (Vercel
+builds it from git), so "deploy" here means project setup, not containerization: (1) import
+the repo into Vercel with `frontend/` as the project root; (2) set the frontend env vars from
+`frontend/.env.local.example` in the Vercel dashboard — `NEXT_PUBLIC_API_URL` pointing at the
+live Render URL from the step above, `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`, and
+`CLERK_SECRET_KEY`. **Skip `DATABASE_URL` unless you keep the Prisma stack** — it's only read
+by the unused frontend Prisma client (see the "Remove the unused Prisma stack" Maintainability
+item); setting it ships your Postgres credentials to the Vercel build for nothing. (3) confirm
+the production build succeeds on Vercel (do the `next build`
+type-error verification item *first* — a `strict`-mode failure blocks this build); (4) once
+the Vercel URL exists, set it as the backend's `FRONTEND_URL`/CORS origin on Render and
+redeploy the backend so cross-origin calls are allowed. Auto-deploy-on-push is on by default
+once the project is imported, so no extra CI is needed for the frontend (the Render
+auto-deploy is wired in Phase 4). (Undocumented.)
+
 ---
 
 ## Phase 4 — CI/CD (~half a day)
@@ -326,6 +358,30 @@ schemas/state, prompt templates, formatting helpers, the node functions, and the
 builder + `run_graph` persistence. A clean split is `prompts.py` / `state.py` / `nodes.py`
 / `graph.py`. **Gate this on the test suite existing** — it's the riskiest refactor to do
 blind. (Undocumented.)
+
+**Drop the unused `swr` dependency and boilerplate `public/` assets** (`frontend/`). `swr` is
+in `package.json` but imported nowhere — all data access is manual `fetch` in `lib/api.ts`;
+remove it. Separately, `frontend/public/` still holds the five default `create-next-app` SVGs
+(`file.svg`, `globe.svg`, `next.svg`, `vercel.svg`, `window.svg`), referenced nowhere — delete
+them (same `create-next-app` leftover theme as the stale `frontend/README.md` in Phase 6).
+Both are trivial, zero-risk dead-weight removals. (Undocumented.)
+
+**Remove the unused Prisma stack from the frontend** (`frontend/`). Prisma is configured but
+plays *no runtime role*: the client in `lib/prisma.ts` is never imported, the generated types
+under `lib/generated/prisma/` are never imported (the frontend's types are hand-defined in
+`lib/api.ts`), and there are no Next.js API routes — all data access goes browser →
+`lib/api.ts` → FastAPI → Postgres via SQLAlchemy. The docs frame Prisma as a schema *mirror*
+(`prisma db pull` → `prisma generate`), but the mirrored types aren't consumed, so even that
+benefit is unrealized. Two coherent resolutions: **(a) drop it** — remove the `prisma`,
+`@prisma/client`, `@prisma/adapter-pg`, and the now-orphaned `pg` + `@types/pg` deps (the
+latter two only back the `PrismaPg` adapter) from `package.json`, delete `lib/prisma.ts`,
+`lib/generated/`, `prisma.config.ts`, and `prisma/schema.prisma`, and drop `DATABASE_URL`
+from the frontend env (this is the cleaner option and removes the Vercel credential-exposure
+flagged in the Phase 3 Vercel item); **or (b) actually use it** — import the generated types
+in `lib/api.ts` instead of hand-maintaining parallel `ReportData`/`HistoryItem` interfaces,
+buying real schema-drift protection. Either is fine; the status quo (carrying three deps + a
+generated-code tree + a leaked DB URL for zero benefit) is the one to avoid. Note this updates
+`CLAUDE.md`'s "Two ORMs, one DB" / Prisma v7 gotchas if option (a) is taken. (Undocumented.)
 
 **Drop the dead `suggested_followups` column** (`backend/app/models/models.py`, line 62,
 plus a migration). It's never written and was removed from the API; currently retained
