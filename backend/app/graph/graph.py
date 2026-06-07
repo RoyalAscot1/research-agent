@@ -42,6 +42,11 @@ class GraphState(TypedDict):
     sentiment_volume: int | None        # number of comments analysed
     report_markdown: str | None
     error: str | None
+    tavily_call_count: int              # running total — checked against the 5-call hard cap
+    iteration_count: int                # running total — checked against the 3-iteration cap
+    coverage_sufficient: bool | None    # set by the coverage-check step each pass through the loop
+    tried_queries: list[str]            # cumulative history of every Tavily query attempted — lets
+                                        # the coverage check avoid proposing near-duplicates of past rounds
 
 
 # ---------------------------------------------------------------------------
@@ -222,15 +227,30 @@ async def planner_node(state: GraphState) -> GraphState:
 
 
 @observe()
-async def tavily_node(state: GraphState) -> GraphState:
+async def researcher_node(state: GraphState) -> GraphState:
+    """
+    Calls Tavily for each planned sub-query, merging and deduplicating results by URL.
+
+    Accumulates across re-plan iterations (starts from any sources already in state)
+    and respects a hard cap of 5 total Tavily calls per graph run, tracked via
+    `tavily_call_count`.
+    """
     try:
         client = TavilyClient(api_key=settings.tavily_api_key)
         search_queries = state.get("search_queries") or [state["query"]]
 
-        seen_urls: set[str] = set()
-        merged: list[dict] = []
+        # Start from whatever was gathered in prior iterations rather than overwriting
+        merged: list[dict] = list(state.get("sources") or [])
+        seen_urls: set[str] = {s["url"] for s in merged if s.get("url")}
+        call_count = state.get("tavily_call_count", 0)
+        tried_queries: list[str] = list(state.get("tried_queries") or [])
 
         for q in search_queries:
+            if call_count >= 5:
+                break  # hard cap reached — stop issuing new Tavily searches
+
+            call_count += 1
+            tried_queries.append(q)
             try:
                 response = client.search(
                     query=q,
@@ -244,12 +264,104 @@ async def tavily_node(state: GraphState) -> GraphState:
                         seen_urls.add(url)
                         merged.append(result)
             except Exception:
-                continue
+                pass  # this sub-query failed — keep going with what we have
 
-        return {**state, "sources": merged, "error": None}
+        return {
+            **state,
+            "sources": merged,
+            "tavily_call_count": call_count,
+            "tried_queries": tried_queries,
+            "iteration_count": state.get("iteration_count", 0) + 1,
+            "error": None,
+        }
     except Exception:
-        # Non-fatal: proceed without sources
-        return {**state, "sources": [], "error": None}
+        # Non-fatal: proceed without sources — no queries were actually attempted
+        # (the failure happened before the loop, e.g. TavilyClient construction)
+        return {
+            **state,
+            "sources": state.get("sources") or [],
+            "iteration_count": state.get("iteration_count", 0) + 1,
+            "error": None,
+        }
+
+
+class CoverageAssessment(BaseModel):
+    sufficient: bool = Field(
+        description="True if the gathered sources are enough to write a thorough, accurate report answering the query. False if there are clear, important gaps."
+    )
+    additional_queries: list[str] = Field(
+        default_factory=list,
+        description="If sufficient is False, 1-2 new focused search queries that would fill the gaps. Must not duplicate or closely overlap queries already tried. Empty if sufficient is True.",
+        max_length=2,
+    )
+
+
+_COVERAGE_PROMPT = """\
+You are evaluating whether enough web research has been gathered to answer a user's query thoroughly.
+
+## User Query
+{query}
+
+## Search Queries Already Tried
+{tried_queries}
+
+## Sources Gathered So Far
+{sources}
+
+## Instructions
+Decide whether this research is sufficient to write a thorough, accurate report answering the query.
+- Mark sufficient=true if the sources adequately cover the topic's key angles.
+- Mark sufficient=false only if there are clear, important gaps — and propose 1-2 focused search queries that would fill them, distinct from the queries already tried.
+- Default to sufficient=true when in doubt — more research has diminishing returns and real cost.\
+"""
+
+
+@observe()
+async def coverage_check_node(state: GraphState) -> GraphState:
+    """
+    Decides whether the accumulated research is good enough, or whether the
+    researcher should run another round with new sub-queries.
+
+    The hard caps (3 iterations, 5 Tavily calls) are enforced here as a backstop —
+    once either is reached, this short-circuits to sufficient=True without an LLM
+    call, regardless of what the model might otherwise suggest.
+    """
+    iteration_count = state.get("iteration_count", 0)
+    tavily_call_count = state.get("tavily_call_count", 0)
+
+    if iteration_count >= 3 or tavily_call_count >= 5:
+        return {**state, "coverage_sufficient": True}
+
+    llm = ChatGoogleGenerativeAI(
+        model="gemini-3.1-flash-lite-preview",
+        google_api_key=settings.gemini_api_key,
+    ).with_structured_output(CoverageAssessment)
+
+    sources = state.get("sources") or []
+    # Use the cumulative history, not `search_queries` — that field gets overwritten
+    # each pass (by the planner initially, then by this node), so it only ever holds
+    # the most recent batch and would let the model propose near-duplicates of
+    # earlier rounds it can no longer see.
+    tried_queries = state.get("tried_queries") or []
+
+    prompt = _COVERAGE_PROMPT.format(
+        query=state["query"],
+        tried_queries="\n".join(f"- {q}" for q in tried_queries) or "(none yet)",
+        sources=_format_sources(sources) if sources else "No sources gathered yet.",
+    )
+
+    try:
+        assessment: CoverageAssessment = await llm.ainvoke([HumanMessage(content=prompt)])
+        if assessment.sufficient or not assessment.additional_queries:
+            return {**state, "coverage_sufficient": True}
+        return {
+            **state,
+            "coverage_sufficient": False,
+            "search_queries": assessment.additional_queries[:2],
+        }
+    except Exception:
+        # Fail safe — an unreliable signal shouldn't keep the loop spinning
+        return {**state, "coverage_sufficient": True}
 
 
 @observe()
@@ -372,19 +484,37 @@ async def synthesizer_node(state: GraphState) -> GraphState:
 # Graph
 # ---------------------------------------------------------------------------
 
-def _route_after_tavily(state: GraphState) -> str:
+def _route_after_coverage(state: GraphState) -> str:
+    """
+    Routes back into the research loop if coverage is insufficient and both hard
+    caps still allow another pass; otherwise proceeds to sentiment/synthesizer
+    based on the planner's run_sentiment decision — same as before the loop existed.
+    """
+    coverage_sufficient = state.get("coverage_sufficient")
+    iteration_count = state.get("iteration_count", 0)
+    tavily_call_count = state.get("tavily_call_count", 0)
+
+    if coverage_sufficient is False and iteration_count < 3 and tavily_call_count < 5:
+        return "researcher"
+
     return "sentiment" if state.get("run_sentiment") else "synthesizer"
 
 
 def _build_graph():
     g = StateGraph(GraphState)
     g.add_node("planner", planner_node)
-    g.add_node("tavily", tavily_node)
+    g.add_node("researcher", researcher_node)
+    g.add_node("coverage_check", coverage_check_node)
     g.add_node("sentiment", sentiment_node)
     g.add_node("synthesizer", synthesizer_node)
     g.set_entry_point("planner")
-    g.add_edge("planner", "tavily")
-    g.add_conditional_edges("tavily", _route_after_tavily, {"sentiment": "sentiment", "synthesizer": "synthesizer"})
+    g.add_edge("planner", "researcher")
+    g.add_edge("researcher", "coverage_check")
+    g.add_conditional_edges(
+        "coverage_check",
+        _route_after_coverage,
+        {"researcher": "researcher", "sentiment": "sentiment", "synthesizer": "synthesizer"},
+    )
     g.add_edge("sentiment", "synthesizer")
     g.add_edge("synthesizer", END)
     return g.compile()
@@ -417,6 +547,10 @@ async def run_graph(job_id: str, user_id: str, query: str) -> None:
                     "sentiment_volume": None,
                     "report_markdown": None,
                     "error": None,
+                    "tavily_call_count": 0,
+                    "iteration_count": 0,
+                    "coverage_sufficient": None,
+                    "tried_queries": [],
                 }
             )
 
