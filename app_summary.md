@@ -62,7 +62,7 @@ Both share a single Postgres database.
 | Tool | Purpose |
 |------|---------|
 | Postgres | Primary database — all structured data (see schema below) |
-| pgvector | Vector search via Postgres extension — stores embedded research chunks in a `document_chunks` table, filtered by `report_id`. No separate service; runs on the existing Neon instance |
+| pgvector (deferred to v2) | Vector search via Postgres extension — will store embedded research chunks in a `document_chunks` table, filtered by `report_id`, for semantic follow-up retrieval. No separate service; runs on the existing Neon instance |
 | Redis (optional, add post-v1) | Job status cache, sentiment cache (TTL 6–24h), rate limit counters |
 
 ### Infrastructure
@@ -95,7 +95,7 @@ research_jobs (
   user_id UUID REFERENCES users(id),
   query TEXT,
   status TEXT,        -- pending | running | done | failed
-  current_step TEXT,  -- written by graph nodes for progress display
+  -- current_step TEXT  -- (deferred to v2) written by graph nodes for progress display
   created_at TIMESTAMPTZ,
   completed_at TIMESTAMPTZ
 )
@@ -113,16 +113,6 @@ reports (
   youtube_comment_volume INT,
   source_count INT,
   overall_sentiment TEXT,        -- Positive | Mixed | Negative
-  created_at TIMESTAMPTZ
-)
-
--- Embedded research chunks for semantic follow-up retrieval (pgvector)
-document_chunks (
-  id UUID PRIMARY KEY,
-  report_id UUID REFERENCES reports(id) ON DELETE CASCADE,
-  user_id UUID REFERENCES users(id),
-  content TEXT,
-  embedding vector(768),         -- Gemini text-embedding-004 output dimension
   created_at TIMESTAMPTZ
 )
 
@@ -144,7 +134,7 @@ follow_ups (
 
 ```
 POST   /queries                        Start a new research job
-GET    /jobs/{job_id}/status           Poll job status (returns status, current_step, report_id when done)
+GET    /jobs/{job_id}/status           Poll job status (returns status, report_id when done; current_step field deferred to v2)
 GET    /reports/{report_id}            Load a finished report
 POST   /reports/{report_id}/followup   Submit a follow-up question (max 5)
 GET    /history                        List all reports for the authenticated user
@@ -156,39 +146,34 @@ DELETE /history                        Clear all history for the user
 
 ## LangGraph graph
 
-### Current state (pipeline — steps 1–14)
+### Live (agent with re-plan loop — steps 1–16, all done)
 
-The graph is a straight-line pipeline with no agentic decision-making:
-
-```
-tavily → sentiment → gemini → END
-```
-
-**tavily** — calls Tavily for web results (basic search depth, 8 results).
-
-**sentiment** — fetches top YouTube comments for the query, scores them with VADER, returns positive/neutral/negative percentages.
-
-**gemini** — synthesises web results + sentiment into a markdown report with `[Source N]` citations and a Public Sentiment section.
-
-### Target state (agent — steps 15–16)
-
-The graph will be extended into a true agent with conditional edges and a re-plan loop:
+The graph is a true agent with conditional edges and a working re-plan loop:
 
 ```
-Planner → Researcher → Sentiment → Synthesizer
-              ↑____________|
-           (re-plan if needed, max 3 iterations)
+Planner → Researcher → Coverage check ─┬─→ Researcher        (loop: insufficient & under both caps)
+                                         ├─→ Sentiment         (run_sentiment=True)
+                                         └─→ Synthesizer       (run_sentiment=False)
+                                                ↓
+                                            Sentiment → Synthesizer → END
 ```
 
-**Planner** — Gemini decides how to decompose the query and which tools to call. Introduces conditional edges — the graph branches based on LLM output.
+**Planner** — Gemini structured output (`ResearchPlan`) decides query decomposition (1–3 Tavily sub-queries, biased toward 1–2), whether to run sentiment (`run_sentiment: bool`), and a dedicated YouTube search query. Falls back to raw query + `run_sentiment=False` if structured output fails.
 
-**Researcher** — calls Tavily for web results (basic depth, 1 credit/call). Runs sub-questions sequentially with `asyncio.sleep(1)` between calls. Hard cap of 5 total Tavily calls per graph run tracked in graph state. Writes `current_step` ("Searching: [term]") to the `research_jobs` row before each call. Chunks and embeds results into `document_chunks` via pgvector. Can trigger a re-plan loop if coverage is insufficient — writes "Coverage insufficient — refining search" to `current_step` when re-planning.
+**Researcher** (renamed from the old `tavily` node) — calls Tavily for web results (basic depth, 1 credit/call), running sub-queries back-to-back with no artificial pacing — Tavily is built for rapid sequential agent calls, and the hard cap (not a delay) is what bounds cost. Merges and deduplicates results by URL, **accumulating across re-plan iterations** rather than overwriting. Tracks `tavily_call_count` and stops issuing new searches once it hits the hard cap of 5 total Tavily calls per run. Passes merged raw sources straight to the synthesizer — chunking/embedding into `document_chunks` via pgvector is deferred to v2 (see Deferred polish).
 
-**Sentiment** — unchanged from current implementation. Planner decides whether to run it based on query type (relevant for consumer/brand topics, skipped for technical queries) by outputting a `run_sentiment` boolean.
+**Coverage check** (new) — Gemini structured output (`CoverageAssessment`) judges whether the gathered sources are sufficient to write a thorough report, or proposes up to 2 new sub-queries to fill gaps. Reads from `tried_queries` — a *cumulative* history of every query attempted across all rounds (deliberately not `search_queries`, which rotates each pass and would let the model propose near-duplicates of earlier rounds it can no longer see). Short-circuits to `sufficient=True` **without an LLM call** once `iteration_count >= 3` or `tavily_call_count >= 5` — the hard caps are backstops that override the model's opinion, not just guidance to it. Fails safe to `sufficient=True` on any error so a flaky signal can't keep the loop spinning.
 
-**Synthesizer** — assembles a prompt from: system instruction + web research chunks (with relevance scores) + sentiment context block + output format instruction.
+**Sentiment** — unchanged from the original implementation. Gated by the planner's `run_sentiment` boolean; the conditional edge now sits after the coverage-check/loop rather than directly after research, but the branch logic is identical.
 
-**Token budget** — enforce `max_iterations=3` on the graph to prevent runaway Gemini calls. Planner prompt instructs: "decompose into 1–2 sub-questions; use 3 only if the query genuinely requires multiple angles." This keeps typical queries at 1–3 Tavily calls total, with the 5-call hard cap as a backstop.
+**Synthesizer** — assembles a prompt from web sources (formatted with `[Source N]` citations) + sentiment context block + output format instruction, same as before.
+
+**Validated live** (see commit history / testing notes) against:
+- A narrow query with a false premise ("Fed FOMC June 2026 meeting" — no such meeting occurred): the loop correctly recognized sparse initial results as a gap, re-planned with genuinely diverse follow-up queries (after the `tried_queries` fix), and converged on the accurate "no meeting occurred" answer — in one run resolving in 2 rounds via genuine LLM sufficiency judgment, in another hitting both hard caps simultaneously at round 3 (a clean confirmation that the two independent backstops converge correctly).
+- A broad query ("state of AI regulation worldwide"): the planner produced 2 well-targeted broad sub-queries, and coverage check judged them sufficient immediately (1 round, well under both caps) — confirming the loop doesn't pad runs with unnecessary searches when the initial plan is already comprehensive.
+- Both runs also exercised the `run_sentiment` conditional correctly in opposite directions (False for the Fed query, True for the AI regulation query, with a sensibly-phrased `youtube_search_query`).
+
+**Cost/latency bounds** — worst case is 9 node executions (1 planner + 3 researcher + 3 coverage_check + 1 sentiment + 1 synthesizer): 5 Gemini calls (planner, up to 3 coverage checks, synthesizer) and up to 5 Tavily calls, both hard-capped. Typical queries resolve in 1–2 research rounds based on live testing.
 
 ---
 
@@ -205,7 +190,7 @@ Follow-ups do NOT re-run the full agent graph. They re-use existing research con
 6. Save the answer to `follow_ups` table with `turn_number = existing_count + 1`
 7. Return `{answer, turn_number}` — typically responds in ~3 seconds
 
-**v2 (post step 15) — pgvector semantic retrieval:**
+**v2 (deferred, alongside pgvector) — semantic retrieval from `document_chunks`:**
 1–2 same as above
 3. Query `document_chunks` WHERE `report_id = $1` ORDER BY embedding similarity to the follow-up question LIMIT k
 4. Pass retrieved chunks + conversation history + new question to Gemini
@@ -232,9 +217,9 @@ Incorporate this sentiment signal where relevant — note whether public opinion
 
 - **Two ORMs, one DB**: Prisma (Next.js/TypeScript) and SQLAlchemy (FastAPI/Python) both point at the same Postgres database. Alembic owns all migrations — configure Prisma to use the existing schema, not manage its own.
 - **YouTube API quota**: YouTube Data API v3 gives 10,000 units/day free. A search costs 100 units; a comment list page costs 1 unit. Fetch top 5 videos, top 20 comments each — well within quota for dev.
-- **pgvector chunk retrieval**: Query `document_chunks` with `WHERE report_id = $1 ORDER BY embedding <=> $2 LIMIT k`. Always filter by `report_id` — never bleed chunks from other reports into a follow-up answer. Cascade deletes handle cleanup when a report is deleted.
+- **pgvector chunk retrieval (v2)**: Once `document_chunks` lands, query it with `WHERE report_id = $1 ORDER BY embedding <=> $2 LIMIT k`. Always filter by `report_id` — never bleed chunks from other reports into a follow-up answer. Cascade deletes handle cleanup when a report is deleted.
 - **Sentiment cache (Redis, post-v1)**: Key: `sentiment:{sha256(query)}`. TTL: 6 hours. Skip YouTube sentiment entirely if cache hit.
-- **Progress reporting**: Graph nodes write a human-readable `current_step` string to the `research_jobs` row as they progress (e.g. "Planning", "Searching: Tesla Q1 earnings", "Coverage insufficient — refining search", "Analysing sentiment", "Writing report"). `GET /jobs/{job_id}/status` returns it. Frontend displays it as a status line under the progress indicator.
+- **Progress reporting (deferred to v2)**: Graph nodes will write a human-readable `current_step` string to the `research_jobs` row as they progress (e.g. "Planning", "Searching: Tesla Q1 earnings", "Coverage insufficient — refining search", "Analysing sentiment", "Writing report"), and `GET /jobs/{job_id}/status` will return it for the frontend to display as a status line. Requires a new `current_step` column + migration — see Deferred polish. Until then, the prompt screen's progress indicator stays generic (status only, no per-step detail).
 - **VADER upgrade path**: Start with VADER for speed. Upgrade to `cardiffnlp/twitter-roberta-base-sentiment` if sarcasm/slang causes poor results.
 - **Report overall sentiment**: Derive from scores — Positive if positive% > 55%, Negative if negative% > 30%, else Mixed.
 - **Clerk auth**: Use `@clerk/nextjs`. Configure `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` and `CLERK_SECRET_KEY` as environment variables on Vercel. Sync Clerk users into the `users` table via a Clerk webhook on `user.created`.
@@ -260,9 +245,10 @@ Incorporate this sentiment signal where relevant — note whether public opinion
 13. Next.js frontend — follow-up chat UI (done)
 14. Configure Langfuse — set up tracing before adding agentic nodes so every graph execution is observable from day one (done)
 15. Add Planner node — LLM decides how to decompose the query and whether to run sentiment (done)
-16. Add Researcher node + pgvector — semantic chunk storage in `document_chunks`, re-plan loop (max 3 iterations, 5 Tavily calls hard cap)
+16. Add Researcher node — re-plan loop (max 3 iterations, 5 Tavily calls hard cap) (done)
 17. Docker + GitHub Actions + Render deploy
 18. Redis caching (post-v1)
+19. pgvector + `document_chunks` — semantic chunk storage and retrieval for follow-ups (post-v1)
 
 ---
 
@@ -276,7 +262,7 @@ Incorporate this sentiment signal where relevant — note whether public opinion
 - **Cost guardrails** — no cap on Tavily credits per user; track usage and throttle at a threshold before shipping.
 - **Testing** — no test suite; pytest covering the graph nodes and critical API endpoints is the gap between personal project and production system.
 - **CI/CD** — GitHub Actions running lint + pytest on push and deploying to Render on merge to main; table stakes for a production-aware project (already in build order step 17).
-- **pgvector on Neon** — enabled via `CREATE EXTENSION vector;` migration. Gemini `text-embedding-004` produces 768-dimension vectors. Index with `ivfflat` or `hnsw` once chunk volume grows.
+- **pgvector on Neon (deferred to v2)** — enable via `CREATE EXTENSION vector;` migration when `document_chunks` lands. Gemini `text-embedding-004` produces 768-dimension vectors. Index with `ivfflat` or `hnsw` once chunk volume grows.
 - **FAISS** — in-process vector search library, faster than pgvector at very large scale but requires manual persistence management; pgvector is the right call for this app.
 - **Elasticsearch** — hybrid BM25 + vector search in one query; worth knowing for interviews as the production alternative to pgvector when exact keyword matching matters alongside semantic search.
 
@@ -284,5 +270,16 @@ Incorporate this sentiment signal where relevant — note whether public opinion
 
 ## Deferred polish (v2)
 
-- **Progress indicator redesign** — replace the spinning disk with a live feed of `current_step` strings showing the agent's reasoning ("Planning", "Searching: [term]", "Coverage insufficient — refining", "Writing report"). The backend wiring lands in step 15; the UI polish is deferred to post-v1.
+- **pgvector + `document_chunks`** — semantic chunk storage and retrieval, originally scoped into step 16. Moved to v2 so the Researcher node (re-plan loop, hard caps — now shipped and validated live) could land without taking on embedding-pipeline and schema-migration risk at the same time. Until this lands, the researcher passes merged raw Tavily results straight to the synthesizer and follow-ups keep using `raw_context` (see "v2 — semantic retrieval" flow above for the target design). Target schema:
+  ```sql
+  document_chunks (
+    id UUID PRIMARY KEY,
+    report_id UUID REFERENCES reports(id) ON DELETE CASCADE,
+    user_id UUID REFERENCES users(id),
+    content TEXT,
+    embedding vector(768),         -- Gemini text-embedding-004 output dimension
+    created_at TIMESTAMPTZ
+  )
+  ```
+- **Progress indicator redesign + `current_step` backend wiring** — both the `current_step` column/migration/status-endpoint plumbing and the frontend redesign (replacing the spinning disk with a live feed of step strings — "Planning", "Searching: [term]", "Coverage insufficient — refining", "Writing report") are deferred to v2 as one unit. The Researcher node (step 16, now live) shipped without per-step progress reporting as planned; status polling remains coarse-grained (`pending`/`running`/`done`/`failed`) until this lands.
 - **Light/dark mode toggle** — the design is dark-first; a toggle can be added post-v1 once core functionality is complete.
