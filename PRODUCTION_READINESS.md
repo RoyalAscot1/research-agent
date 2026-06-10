@@ -21,17 +21,16 @@ Provenance tags: *(Undocumented)* = found in this review, not in the project doc
 
 *Goal: the app is safe and bug-free on its core path before anyone sees it.*
 
-**[critical] Pin the JWT issuer + verify audience/`azp` (auth bypass)** (`backend/app/auth.py`,
-lines 36–41). The issuer is read from the token's *own unverified payload* and the JWKS is then
+**[done] Pin the JWT issuer + verify audience/`azp` (auth bypass)** (`backend/app/auth.py`).
+~~The issuer is read from the token's *own unverified payload* and the JWKS is then
 fetched from that URL — there is no allowlist tying it to your Clerk instance. An attacker
 can host their own JWKS, self-sign a token with any `sub`, set `iss` to their domain, and
-it validates: full token forgery / impersonation. This is **not** hardening — it's an
-exploitable bypass that exists in the code today, independent of deploy. Fix order: (1) pin
-`iss` to your Clerk instance's known issuer and reject anything else *before* fetching the
-JWKS; (2) verify `audience`/`azp` — without this, a token from a *different* Clerk app on
-the same issuer infrastructure could still pass, so both steps are required, not either/or;
-(3) the existing signature + `exp` checks then become meaningful. (Undocumented — and
-previously under-rated as a missing-audience check.)
+it validates: full token forgery / impersonation.~~ **Fixed**: `get_current_user` now rejects
+any token whose `iss` doesn't match `settings.clerk_issuer` *before* fetching the JWKS, and
+rejects any token whose `azp` isn't in `settings.clerk_authorized_parties` after signature
+verification. New env vars `CLERK_ISSUER` and `CLERK_AUTHORIZED_PARTIES` added to
+`backend/.env(.example)` and `config.py`. Verified live: a forged/garbage token returns 401,
+a real Clerk session token (matching `iss`/`azp`) returns 200 on `/history`.
 
 **`CLERK_SECRET_KEY` is documented as required but the backend never uses it**
 (`backend/.env.example`, `CLAUDE.md`; absent from `backend/app/config.py`). `config.py`

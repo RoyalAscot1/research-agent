@@ -7,6 +7,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.database import get_db
 from app.models.models import User
 
@@ -38,6 +39,9 @@ async def get_current_user(
     except (jwt.PyJWTError, KeyError):
         raise unauth
 
+    if issuer != settings.clerk_issuer:
+        raise unauth
+
     jwks = await _get_jwks(issuer)
     key_data = next((k for k in jwks["keys"] if k["kid"] == header.get("kid")), None)
     if not key_data:
@@ -50,8 +54,16 @@ async def get_current_user(
 
     try:
         public_key = jwt.algorithms.RSAAlgorithm.from_jwk(key_data)
-        payload = jwt.decode(token, public_key, algorithms=["RS256"])
+        payload = jwt.decode(
+            token,
+            public_key,
+            algorithms=["RS256"],
+            issuer=settings.clerk_issuer,
+        )
     except jwt.PyJWTError:
+        raise unauth
+
+    if payload.get("azp") not in settings.clerk_authorized_parties:
         raise unauth
 
     clerk_user_id: str = payload["sub"]

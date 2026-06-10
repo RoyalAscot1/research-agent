@@ -63,7 +63,7 @@ frontend/  Next.js 16 (TypeScript)
 - Keys: `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` and `CLERK_SECRET_KEY` in `frontend/.env.local`; `CLERK_SECRET_KEY` also in `backend/.env`
 - `middleware.ts` uses `clerkMiddleware` + `createRouteMatcher` to protect `/history` and `/chat`
 - `<ClerkProvider>` wraps the root layout
-- **Backend JWT verification**: `app/auth.py` — `get_current_user` dependency verifies the Bearer token via Clerk's JWKS endpoint (RS256), then upserts the user into Postgres. Use as a dependency on any protected endpoint.
+- **Backend JWT verification**: `app/auth.py` — `get_current_user` dependency pins the token's `iss` claim against `settings.clerk_issuer` *before* fetching the JWKS (prevents an attacker-hosted JWKS from being trusted), verifies the signature (RS256) against Clerk's real keys, checks `azp` against `settings.clerk_authorized_parties`, then upserts the user into Postgres. Use as a dependency on any protected endpoint.
 - **User upsert**: happens lazily on first API request — no webhook needed for local dev. A `user.created` webhook will complement this in production (deferred to step 17).
 - **`getToken()` race condition**: On first page load, `getToken()` can return `null` even when `isSignedIn` is true — the session token hasn't been cached yet. Always use the `resolveToken` helper in `app/page.tsx` (tries once, waits 350ms, retries) rather than calling `getToken()` directly. Copy this pattern to any future page that makes authenticated API calls.
 - **User deletion**: must be handled via a `user.deleted` Clerk webhook — no code for this yet (deferred to step 17).
@@ -99,5 +99,5 @@ frontend/  Next.js 16 (TypeScript)
 - Alembic runs all migrations; Prisma uses `prisma db pull` to mirror changes
 
 ## Environment variables
-- Backend: `DATABASE_URL`, `GEMINI_API_KEY`, `TAVILY_API_KEY`, `YOUTUBE_API_KEY`, `CLERK_SECRET_KEY`, `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_HOST` — see `backend/.env.example`
+- Backend: `DATABASE_URL`, `GEMINI_API_KEY`, `TAVILY_API_KEY`, `YOUTUBE_API_KEY`, `CLERK_SECRET_KEY`, `CLERK_ISSUER`, `CLERK_AUTHORIZED_PARTIES`, `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_HOST` — see `backend/.env.example`
 - Frontend: `DATABASE_URL`, `NEXT_PUBLIC_API_URL`, `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`, `CLERK_SECRET_KEY` — see `frontend/.env.local.example`
