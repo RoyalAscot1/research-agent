@@ -60,7 +60,7 @@ frontend/  Next.js 16 (TypeScript)
 
 ### Clerk
 - Auth is handled entirely by Clerk — no NextAuth, no `@auth/prisma-adapter`
-- Keys: `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` and `CLERK_SECRET_KEY` in `frontend/.env.local`; `CLERK_SECRET_KEY` also in `backend/.env`
+- Keys: `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` and `CLERK_SECRET_KEY` in `frontend/.env.local`
 - `middleware.ts` uses `clerkMiddleware` + `createRouteMatcher` to protect `/history` and `/chat`
 - `<ClerkProvider>` wraps the root layout
 - **Backend JWT verification**: `app/auth.py` — `get_current_user` dependency pins the token's `iss` claim against `settings.clerk_issuer` *before* fetching the JWKS (prevents an attacker-hosted JWKS from being trusted), verifies the signature (RS256) against Clerk's real keys, checks `azp` against `settings.clerk_authorized_parties`, then upserts the user into Postgres. Use as a dependency on any protected endpoint.
@@ -99,5 +99,5 @@ frontend/  Next.js 16 (TypeScript)
 - Alembic runs all migrations; Prisma uses `prisma db pull` to mirror changes
 
 ## Environment variables
-- Backend: `DATABASE_URL`, `GEMINI_API_KEY`, `TAVILY_API_KEY`, `YOUTUBE_API_KEY`, `CLERK_SECRET_KEY`, `CLERK_ISSUER`, `CLERK_AUTHORIZED_PARTIES`, `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_HOST` — see `backend/.env.example`
+- Backend: `DATABASE_URL`, `GEMINI_API_KEY`, `TAVILY_API_KEY`, `YOUTUBE_API_KEY`, `CLERK_ISSUER`, `CLERK_AUTHORIZED_PARTIES`, `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_HOST` — see `backend/.env.example`
 - Frontend: `DATABASE_URL`, `NEXT_PUBLIC_API_URL`, `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`, `CLERK_SECRET_KEY` — see `frontend/.env.local.example`
