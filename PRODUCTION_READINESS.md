@@ -62,11 +62,18 @@ in the browser console to mock `POST /queries` and `GET /jobs/{id}/status` (retu
 `status: "done", report_id: null`) — the UI now surfaces the error immediately instead of
 polling forever. (Undocumented.)
 
-**Frontend poll cap for stuck `running` jobs** (`frontend/app/page.tsx`, line 104). If a job
-never completes (e.g. a Render restart/spin-down mid-run kills the in-process task), the
-prompt screen polls forever with an eternal spinner. Add a cap (N ticks or a time budget)
-that surfaces an error state. This handles the *symptom*; the root-cause fix (a durable task
-queue) is a deferred real-production item — see **Deferred**. (Undocumented.)
+**[done] Frontend poll cap for stuck `running` jobs** (`frontend/app/page.tsx`, line 104).
+~~If a job never completes (e.g. a Render restart/spin-down mid-run kills the in-process
+task), the prompt screen polls forever with an eternal spinner. Add a cap (N ticks or a time
+budget) that surfaces an error state.~~ **Fixed**: a `pollCountRef` tracks attempts; once it
+exceeds `MAX_POLL_ATTEMPTS` (90, ~3 minutes at 2s/poll) the poll loop bails to the error state
+("This is taking longer than expected. Please try again.") instead of rescheduling. 90 was
+chosen generously — it also backstops the not-yet-fixed missing-Gemini-timeout item below,
+since right now a hung Gemini call has no other backstop. Verified live by temporarily
+lowering the cap to 3 and mocking `/jobs/{id}/status` to always return `status: "running"` —
+the UI errored out after 3 polls instead of spinning forever. This handles the *symptom*; the
+root-cause fix (a durable task queue) is a deferred real-production item — see **Deferred**.
+(Undocumented.)
 
 **No timeout on the Gemini/LLM calls** (`backend/app/graph/graph.py`, line 204 and the 4
 other `ChatGoogleGenerativeAI(...)` sites). No `timeout`/`request_timeout` is set, so a hung
