@@ -42,13 +42,14 @@ calls this backend doesn't make. Removed `CLERK_SECRET_KEY` from `backend/.env.e
 backend env-var list in `CLAUDE.md` so it no longer implies a security binding that isn't there.
 Frontend references stay — the Next.js middleware genuinely uses it. (Undocumented.)
 
-**Concurrent first-request user creation can 500** (`backend/app/auth.py`, lines 60–68).
-The lazy upsert does `select` → if missing, `insert` + `commit`. Two near-simultaneous
-first requests from a brand-new user both see "no user" and both insert, violating the
-`clerk_user_id` unique constraint → unhandled `IntegrityError` → 500. Use Postgres
-`INSERT ... ON CONFLICT DO NOTHING` (or catch the integrity error and re-select). A
-`user.created` webhook would also sidestep it, but the lazy path needs to be safe on its
-own. (Undocumented.)
+**[done] Concurrent first-request user creation can 500** (`backend/app/auth.py`).
+~~The lazy upsert did `select` → if missing, `insert` + `commit`. Two near-simultaneous
+first requests from a brand-new user both saw "no user" and both inserted, violating the
+`clerk_user_id` unique constraint → unhandled `IntegrityError` → 500.~~ **Fixed**: the
+insert now uses Postgres `INSERT ... ON CONFLICT (clerk_user_id) DO NOTHING`, followed by
+a re-select to fetch the row regardless of which concurrent request won the insert. A
+`user.created` webhook would also sidestep it, but the lazy path is now safe on its own.
+(Undocumented.)
 
 **Frontend polls forever when a job is `done` but has no report** (`frontend/app/page.tsx`,
 lines 110–117). `GET /jobs/{id}/status` can legitimately return `status: "done"` with

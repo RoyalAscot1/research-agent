@@ -5,6 +5,7 @@ import jwt
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
@@ -73,9 +74,14 @@ async def get_current_user(
     user = result.scalar_one_or_none()
 
     if not user:
-        user = User(id=uuid.uuid4(), clerk_user_id=clerk_user_id, email=email)
-        db.add(user)
+        stmt = (
+            pg_insert(User)
+            .values(id=uuid.uuid4(), clerk_user_id=clerk_user_id, email=email)
+            .on_conflict_do_nothing(index_elements=["clerk_user_id"])
+        )
+        await db.execute(stmt)
         await db.commit()
-        await db.refresh(user)
+        result = await db.execute(select(User).where(User.clerk_user_id == clerk_user_id))
+        user = result.scalar_one_or_none()
 
     return user
