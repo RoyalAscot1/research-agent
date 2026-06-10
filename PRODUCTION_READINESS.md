@@ -32,12 +32,15 @@ verification. New env vars `CLERK_ISSUER` and `CLERK_AUTHORIZED_PARTIES` added t
 `backend/.env(.example)` and `config.py`. Verified live: a forged/garbage token returns 401,
 a real Clerk session token (matching `iss`/`azp`) returns 200 on `/history`.
 
-**`CLERK_SECRET_KEY` is documented as required but the backend never uses it**
-(`backend/.env.example`, `CLAUDE.md`; absent from `backend/app/config.py`). `config.py`
+**[done] `CLERK_SECRET_KEY` is documented as required but the backend never uses it**
+(`backend/.env.example`, `CLAUDE.md`; absent from `backend/app/config.py`). ~~`config.py`
 doesn't declare it and `extra="ignore"` silently drops it, so no code reads it — reinforcing
-the auth-bypass item above (the backend has no binding to your actual Clerk instance). Either
-wire it into verification or remove it from the example so it doesn't imply security that
-isn't there. (Undocumented.)
+the auth-bypass item above (the backend has no binding to your actual Clerk instance).~~
+**Fixed (remove, not wire-in)**: the backend verifies Clerk JWTs asymmetrically via the public
+JWKS (RS256), so the secret key is never needed — it's only for server-side Clerk Backend API
+calls this backend doesn't make. Removed `CLERK_SECRET_KEY` from `backend/.env.example` and the
+backend env-var list in `CLAUDE.md` so it no longer implies a security binding that isn't there.
+Frontend references stay — the Next.js middleware genuinely uses it. (Undocumented.)
 
 **Concurrent first-request user creation can 500** (`backend/app/auth.py`, lines 60–68).
 The lazy upsert does `select` → if missing, `insert` + `commit`. Two near-simultaneous
