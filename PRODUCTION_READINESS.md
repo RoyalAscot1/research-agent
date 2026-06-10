@@ -51,11 +51,16 @@ a re-select to fetch the row regardless of which concurrent request won the inse
 `user.created` webhook would also sidestep it, but the lazy path is now safe on its own.
 (Undocumented.)
 
-**Frontend polls forever when a job is `done` but has no report** (`frontend/app/page.tsx`,
-lines 110–117). `GET /jobs/{id}/status` can legitimately return `status: "done"` with
+**[done] Frontend polls forever when a job is `done` but has no report** (`frontend/app/page.tsx`,
+lines 110–117). ~~`GET /jobs/{id}/status` can legitimately return `status: "done"` with
 `report_id: null` (`jobs.py:41`). The poll only redirects on `done && report_id` and only
 errors on `failed`, so that case falls through to the `else` branch and re-polls
-indefinitely with no end state. Handle `done && !report_id` as an error. (Undocumented.)
+indefinitely with no end state.~~ **Fixed**: added a `done && !report_id` branch that sets
+the error state ("Research finished but no report was generated. Please try again.")
+instead of falling through to the re-poll `else`. Verified live by overriding `window.fetch`
+in the browser console to mock `POST /queries` and `GET /jobs/{id}/status` (returning
+`status: "done", report_id: null`) — the UI now surfaces the error immediately instead of
+polling forever. (Undocumented.)
 
 **Frontend poll cap for stuck `running` jobs** (`frontend/app/page.tsx`, line 104). If a job
 never completes (e.g. a Render restart/spin-down mid-run kills the in-process task), the

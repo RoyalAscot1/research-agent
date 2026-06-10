@@ -109,6 +109,9 @@ export default function HomePage() {
         const data = await api.getJobStatus(token, jobId);
         if (data.status === "done" && data.report_id) {
           router.push(`/chat/${data.report_id}`);
+        } else if (data.status === "done") {
+          setStatus("error");
+          setError("Research finished but no report was generated. Please try again.");
         } else if (data.status === "failed") {
           setStatus("error");
           setError("Research failed. Please try again.");
