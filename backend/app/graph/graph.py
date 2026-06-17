@@ -1,3 +1,4 @@
+import asyncio
 import uuid
 from datetime import datetime, timezone
 from typing import TypedDict
@@ -14,6 +15,19 @@ from langfuse import observe
 from app.config import settings
 from app.database import AsyncSessionLocal
 from app.models.models import Report, ResearchJob
+
+
+# Hard ceiling on any single Gemini request. Without it a hung LLM call leaves
+# the LangGraph run (and its `research_jobs` row) stuck in `running` forever —
+# the frontend poll cap only surfaces the symptom.
+#
+# Enforced with `asyncio.wait_for` around each `ainvoke`, NOT the constructor's
+# `timeout=` kwarg: the current (deprecated) `google.generativeai` client silently
+# ignores that field — verified that a 0.001s constructor timeout still completed
+# the request. `wait_for` is provider-agnostic and guaranteed to raise. On timeout
+# the per-node try/except blocks turn the error into a fail-soft (planner/coverage)
+# or a `failed` job (synthesizer), instead of hanging.
+_LLM_REQUEST_TIMEOUT_SECONDS = 60
 
 
 class ResearchPlan(BaseModel):
@@ -161,7 +175,10 @@ async def call_gemini_followup(
         question=question,
     )
 
-    response = await llm.ainvoke([HumanMessage(content=prompt)])
+    response = await asyncio.wait_for(
+        llm.ainvoke([HumanMessage(content=prompt)]),
+        timeout=_LLM_REQUEST_TIMEOUT_SECONDS,
+    )
     return response.content
 
 
@@ -209,7 +226,10 @@ async def planner_node(state: GraphState) -> GraphState:
     prompt = _PLANNER_PROMPT.format(query=state["query"])
 
     try:
-        plan: ResearchPlan = await llm.ainvoke([HumanMessage(content=prompt)])
+        plan: ResearchPlan = await asyncio.wait_for(
+            llm.ainvoke([HumanMessage(content=prompt)]),
+            timeout=_LLM_REQUEST_TIMEOUT_SECONDS,
+        )
         return {
             **state,
             "search_queries": plan.search_queries,
@@ -351,7 +371,10 @@ async def coverage_check_node(state: GraphState) -> GraphState:
     )
 
     try:
-        assessment: CoverageAssessment = await llm.ainvoke([HumanMessage(content=prompt)])
+        assessment: CoverageAssessment = await asyncio.wait_for(
+            llm.ainvoke([HumanMessage(content=prompt)]),
+            timeout=_LLM_REQUEST_TIMEOUT_SECONDS,
+        )
         if assessment.sufficient or not assessment.additional_queries:
             return {**state, "coverage_sufficient": True}
         return {
@@ -474,10 +497,17 @@ async def synthesizer_node(state: GraphState) -> GraphState:
                 sentiment_section=sentiment_section,
             )
 
-        response = await llm.ainvoke([HumanMessage(content=prompt)])
+        response = await asyncio.wait_for(
+            llm.ainvoke([HumanMessage(content=prompt)]),
+            timeout=_LLM_REQUEST_TIMEOUT_SECONDS,
+        )
         return {**state, "report_markdown": response.content, "error": None}
     except Exception as exc:
-        return {**state, "report_markdown": None, "error": str(exc)}
+        # str(exc) is empty for some exceptions (notably asyncio.TimeoutError),
+        # and run_graph treats a falsy error as success — fall back to the class
+        # name so a timeout reliably flips the job to `failed` instead of
+        # persisting a null report.
+        return {**state, "report_markdown": None, "error": str(exc) or type(exc).__name__}
 
 
 # ---------------------------------------------------------------------------

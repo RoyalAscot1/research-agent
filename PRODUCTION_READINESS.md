@@ -75,10 +75,26 @@ the UI errored out after 3 polls instead of spinning forever. This handles the *
 root-cause fix (a durable task queue) is a deferred real-production item — see **Deferred**.
 (Undocumented.)
 
-**No timeout on the Gemini/LLM calls** (`backend/app/graph/graph.py`, line 204 and the 4
-other `ChatGoogleGenerativeAI(...)` sites). No `timeout`/`request_timeout` is set, so a hung
+**[done] No timeout on the Gemini/LLM calls** (`backend/app/graph/graph.py`). ~~No
+`timeout`/`request_timeout` is set on the `ChatGoogleGenerativeAI(...)` sites, so a hung
 Gemini request leaves the job stuck in `running` forever (which the poll cap above then
-surfaces). Set a request timeout so a stalled call fails fast instead. (Undocumented.)
+surfaces). Set a request timeout so a stalled call fails fast instead.~~ **Fixed**: added a
+module-level `_LLM_REQUEST_TIMEOUT_SECONDS = 60` constant and wrapped all four `ainvoke`
+calls (planner, coverage_check, synthesizer, `call_gemini_followup`; researcher/sentiment
+don't call Gemini) in `asyncio.wait_for(...)`. **The constructor's `timeout=` kwarg was tried
+first and verified non-functional** — a 0.001s constructor timeout still let the request
+complete, because the deprecated `google.generativeai` client silently ignores that field —
+so enforcement is at the asyncio layer instead (provider-agnostic, guaranteed to raise).
+On timeout the existing per-node try/except turns the raised `TimeoutError` into a fail-soft
+for planner/coverage and a `failed` job for the synthesizer — no more zombie `running` jobs.
+**Also fixed a latent bug this surfaced**: the synthesizer's `error: str(exc)` is `""` for
+`asyncio.TimeoutError`, and `run_graph`'s `if state["error"]:` treats a falsy error as
+success — a synthesizer timeout would have persisted a null report and marked the job `done`.
+Changed to `str(exc) or type(exc).__name__` so the failure is non-empty. Verified live: a real
+query plans/synthesizes normally at 60s; forcing the timeout to 0.001s makes the planner take
+its raw-query fallback and the synthesizer set `error="TimeoutError"` → job `failed`. A shared
+`_make_llm()` factory to dedup the repeated config is deliberately deferred to the
+Maintainability section (gated on the Phase 2 test suite). (Undocumented.)
 
 **Treat empty synthesizer output as a failure** (`backend/app/graph/graph.py`, line 557).
 The job is marked `done` even when `report_markdown` is empty with no error set,

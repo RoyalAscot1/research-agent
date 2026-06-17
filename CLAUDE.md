@@ -91,6 +91,8 @@ frontend/  Next.js 16 (TypeScript)
 - Uses `gemini-3.1-flash-lite-preview` (not 1.5-flash — that model is unavailable on the current API key)
 - `run_graph` opens its own `AsyncSessionLocal` session — it runs outside any request context so it cannot use the request-scoped `get_db` dependency
 - `planner_node` falls back to raw query + `run_sentiment=False` on structured output failure. `researcher_node`, `coverage_check_node`, and `sentiment_node` failures are non-fatal — the graph continues with whatever sources/sentiment/coverage signal it has (coverage_check fails safe to `sufficient=True` so an unreliable signal can't keep the loop spinning). `synthesizer_node` failures set `state["error"]` which flips the job to `failed`.
+- **LLM timeouts use `asyncio.wait_for`, NOT the constructor `timeout=` kwarg.** Every `llm.ainvoke(...)` is wrapped in `asyncio.wait_for(..., timeout=_LLM_REQUEST_TIMEOUT_SECONDS)` (60s) so a hung Gemini call can't leave a job stuck in `running` forever. The `ChatGoogleGenerativeAI(timeout=...)` constructor field is **silently ignored** by the deprecated `google.generativeai` client (verified: a 0.001s constructor timeout still let the request complete) — don't "simplify" the `wait_for` back into the constructor, it reintroduces the hang.
+- **Node `error` strings must be non-empty to register as failures.** `run_graph` decides `failed` vs `done` with `if state["error"]:`, so a falsy error string is treated as success. `str(asyncio.TimeoutError())` is `""`, so `synthesizer_node` uses `str(exc) or type(exc).__name__` — otherwise a synthesizer timeout would persist a null report and mark the job `done`.
 - Outer `run_graph` wraps the full body in try/except to flip status to `failed` on DB errors after `status = "running"`.
 
 
