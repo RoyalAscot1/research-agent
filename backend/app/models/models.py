@@ -10,6 +10,7 @@ from sqlalchemy import (
     String,
     Text,
     TIMESTAMP,
+    UniqueConstraint,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import relationship
@@ -82,6 +83,9 @@ class Report(Base):
 
 class FollowUp(Base):
     __tablename__ = "follow_ups"
+    __table_args__ = (
+        UniqueConstraint("report_id", "turn_number", name="uq_follow_ups_report_turn"),
+    )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     report_id = Column(UUID(as_uuid=True), ForeignKey("reports.id"), nullable=False)

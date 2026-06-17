@@ -124,7 +124,8 @@ follow_ups (
   question TEXT,
   answer TEXT,
   turn_number INT,               -- 1–5
-  created_at TIMESTAMPTZ
+  created_at TIMESTAMPTZ,
+  UNIQUE(report_id, turn_number)  -- one follow-up per turn, per report
 )
 ```
 

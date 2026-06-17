@@ -3,6 +3,7 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import get_current_user
@@ -142,6 +143,15 @@ async def create_followup(
         turn_number=turn_number,
     )
     db.add(follow_up)
-    await db.commit()
+    try:
+        await db.commit()
+    except IntegrityError:
+        # A concurrent follow-up claimed this turn_number first — the
+        # uq_follow_ups_report_turn constraint rejected the duplicate insert.
+        await db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="A concurrent follow-up was submitted — please retry.",
+        )
 
     return {"answer": answer, "turn_number": turn_number}

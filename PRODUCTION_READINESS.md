@@ -136,12 +136,20 @@ reports), ran `alembic upgrade head` cleanly, and confirmed the constraint now e
 Postgres (`pg_constraint` shows `uq_reports_job_id`). The DB invariant now backs the ORM's
 `uselist=False` / `scalar_one_or_none()` assumption. (Undocumented.)
 
-**Follow-up race / unique constraint** (`backend/app/routers/reports.py`, line 102, plus
-a new migration). The count → cap-check → insert sequence isn't atomic and has a slow
+**[done] Follow-up race / unique constraint** (`backend/app/routers/reports.py`, plus
+a new migration). ~~The count → cap-check → insert sequence isn't atomic and has a slow
 Gemini call in the middle, so concurrent follow-ups for the same report can both pass the
 5-cap and insert a duplicate `turn_number` (which the frontend uses as a React key). Add a
 unique constraint on `(report_id, turn_number)` — much cheaper before production data
-exists — and catch the resulting `IntegrityError` to return a clean 409. (Undocumented.)
+exists — and catch the resulting `IntegrityError` to return a clean 409.~~ **Fixed**: added a
+composite `UniqueConstraint("report_id", "turn_number", name="uq_follow_ups_report_turn")` to
+the `FollowUp` model and a hand-written migration (revision `b2c3d4e5f6a7`) creating it, then
+wrapped the follow-up `commit()` in a `try/except IntegrityError` that rolls back and raises a
+clean **409** ("A concurrent follow-up was submitted — please retry.") instead of a 500.
+Verified no duplicate `(report_id, turn_number)` rows existed before applying (0 of 8
+follow-ups), ran `alembic upgrade head` cleanly, and confirmed `pg_constraint` shows
+`uq_follow_ups_report_turn`. The DB now backs the per-report turn-number invariant the
+frontend relies on for React keys. (Undocumented.)
 
 *Quick wins to fold in here (small, prevent code-review embarrassment):*
 
