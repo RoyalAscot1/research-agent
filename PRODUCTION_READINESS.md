@@ -96,9 +96,16 @@ its raw-query fallback and the synthesizer set `error="TimeoutError"` → job `f
 `_make_llm()` factory to dedup the repeated config is deliberately deferred to the
 Maintainability section (gated on the Phase 2 test suite). (Undocumented.)
 
-**Treat empty synthesizer output as a failure** (`backend/app/graph/graph.py`, line 557).
-The job is marked `done` even when `report_markdown` is empty with no error set,
-persisting a blank report with no failure signal. (Undocumented.)
+**[done] Treat empty synthesizer output as a failure** (`backend/app/graph/graph.py`,
+`synthesizer_node`). ~~The job is marked `done` even when `report_markdown` is empty with no
+error set, persisting a blank report with no failure signal.~~ **Fixed**: after the
+`ainvoke`, the synthesizer normalises `response.content` (joining the list-of-parts shape into
+a string) and, if it's empty or whitespace-only, returns `error="Synthesizer produced an empty
+report"` with `report_markdown=None`. That non-empty error string trips `run_graph`'s
+`if state["error"]:` so the job is marked `failed` instead of persisting a blank report — the
+same falsy-error gotcha the synthesizer-timeout fix relied on. Verified by mocking the LLM to
+return `""`, whitespace, an empty list, a real string, and a real list-of-parts: the first
+three fail, the last two pass through with the list correctly joined. (Undocumented.)
 
 **Blocking synchronous I/O on the async event loop** (`backend/app/graph/graph.py`, lines
 255, 378). `researcher_node` calls `TavilyClient.search()` and `sentiment_node` calls the
@@ -125,9 +132,12 @@ exists — and catch the resulting `IntegrityError` to return a clean 409. (Undo
 
 *Quick wins to fold in here (small, prevent code-review embarrassment):*
 
-- **Coerce `response.content` to `str`** (`backend/app/graph/graph.py`, lines 165 and 478).
-  LangChain's `content` can be a string or a list; the return type and the DB write assume
-  it's always a string. (Undocumented.)
+- **Coerce `response.content` to `str`** (`backend/app/graph/graph.py`). LangChain's
+  `content` can be a string or a list; the return type and the DB write assume it's always a
+  string. **Synthesizer site done** (folded into the empty-output fix above — it now joins the
+  list shape before the emptiness check). **Still open:** `call_gemini_followup` (line 182)
+  returns `response.content` raw, so a list-shaped follow-up answer would be persisted as a
+  non-string. (Undocumented.)
 - **`HTTPBearer()` returns 403, not 401, on a missing token** (`backend/app/auth.py`, line
   13). `auto_error=True` (the default) raises 403 when the `Authorization` header is absent,
   but the frontend's "Session expired, sign in again" messaging implies 401. Use

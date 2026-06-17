@@ -501,7 +501,23 @@ async def synthesizer_node(state: GraphState) -> GraphState:
             llm.ainvoke([HumanMessage(content=prompt)]),
             timeout=_LLM_REQUEST_TIMEOUT_SECONDS,
         )
-        return {**state, "report_markdown": response.content, "error": None}
+        # content can be a str or a list of parts depending on the response;
+        # normalise to a string so the emptiness check below is reliable.
+        content = response.content
+        if isinstance(content, list):
+            content = "".join(
+                part if isinstance(part, str) else str(part) for part in content
+            )
+        if not content or not content.strip():
+            # A blank report with no exception would otherwise be persisted and
+            # marked `done` (run_graph treats a falsy error as success), leaving
+            # the user with an empty report. Flip it to a failure instead.
+            return {
+                **state,
+                "report_markdown": None,
+                "error": "Synthesizer produced an empty report",
+            }
+        return {**state, "report_markdown": content, "error": None}
     except Exception as exc:
         # str(exc) is empty for some exceptions (notably asyncio.TimeoutError),
         # and run_graph treats a falsy error as success — fall back to the class
