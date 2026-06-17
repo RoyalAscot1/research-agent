@@ -20,7 +20,7 @@ async def get_job_status(
     try:
         jid = uuid.UUID(job_id)
     except ValueError:
-        raise HTTPException(status_code=404, detail="Job not found")
+        raise HTTPException(status_code=404, detail="Job not found") from None
     job = await db.get(ResearchJob, jid)
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
@@ -34,9 +34,7 @@ async def get_job_status(
     }
 
     if job.status == "done":
-        result = await db.execute(
-            select(Report).where(Report.job_id == jid)
-        )
+        result = await db.execute(select(Report).where(Report.job_id == jid))
         report = result.scalar_one_or_none()
         response["report_id"] = str(report.id) if report else None
 

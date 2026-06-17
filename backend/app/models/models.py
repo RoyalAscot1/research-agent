@@ -2,6 +2,7 @@ import uuid
 from datetime import datetime, timezone
 
 from sqlalchemy import (
+    TIMESTAMP,
     Column,
     Enum,
     Float,
@@ -9,7 +10,6 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
-    TIMESTAMP,
     UniqueConstraint,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID

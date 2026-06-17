@@ -6,16 +6,15 @@ from typing import TypedDict
 from googleapiclient.discovery import build
 from langchain_core.messages import HumanMessage
 from langchain_google_genai import ChatGoogleGenerativeAI
+from langfuse import observe
 from langgraph.graph import END, StateGraph
 from pydantic import BaseModel, Field
 from tavily import TavilyClient
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
-from langfuse import observe
 
 from app.config import settings
 from app.database import AsyncSessionLocal
 from app.models.models import Report, ResearchJob
-
 
 # Hard ceiling on any single Gemini request. Without it a hung LLM call leaves
 # the LangGraph run (and its `research_jobs` row) stuck in `running` forever —
@@ -52,15 +51,15 @@ class GraphState(TypedDict):
     run_sentiment: bool | None
     youtube_search_query: str | None
     sources: list[dict] | None
-    sentiment_scores: dict | None       # {"positive": float, "neutral": float, "negative": float}
-    sentiment_volume: int | None        # number of comments analysed
+    sentiment_scores: dict | None  # {"positive": float, "neutral": float, "negative": float}
+    sentiment_volume: int | None  # number of comments analysed
     report_markdown: str | None
     error: str | None
-    tavily_call_count: int              # running total — checked against the 5-call hard cap
-    iteration_count: int                # running total — checked against the 3-iteration cap
-    coverage_sufficient: bool | None    # set by the coverage-check step each pass through the loop
-    tried_queries: list[str]            # cumulative history of every Tavily query attempted — lets
-                                        # the coverage check avoid proposing near-duplicates of past rounds
+    tavily_call_count: int  # running total — checked against the 5-call hard cap
+    iteration_count: int  # running total — checked against the 3-iteration cap
+    coverage_sufficient: bool | None  # set by the coverage-check step each pass through the loop
+    tried_queries: list[str]  # cumulative history of every Tavily query attempted — lets
+    # the coverage check avoid proposing near-duplicates of past rounds
 
 
 # ---------------------------------------------------------------------------
@@ -111,9 +110,7 @@ def _content_to_str(content) -> str:
     the list into a single string so callers can treat it uniformly.
     """
     if isinstance(content, list):
-        return "".join(
-            part if isinstance(part, str) else str(part) for part in content
-        )
+        return "".join(part if isinstance(part, str) else str(part) for part in content)
     return content
 
 
@@ -411,14 +408,18 @@ async def sentiment_node(state: GraphState) -> GraphState:
 
         # Step 1: search for top 5 relevant videos
         yt_query = state.get("youtube_search_query") or state["query"]
-        search_response = youtube.search().list(
-            q=yt_query,
-            part="id",
-            type="video",
-            maxResults=5,
-            order="relevance",
-            videoCaption="any",
-        ).execute()
+        search_response = (
+            youtube.search()
+            .list(
+                q=yt_query,
+                part="id",
+                type="video",
+                maxResults=5,
+                order="relevance",
+                videoCaption="any",
+            )
+            .execute()
+        )
 
         video_ids = [
             item["id"]["videoId"]
@@ -433,17 +434,19 @@ async def sentiment_node(state: GraphState) -> GraphState:
         comments: list[str] = []
         for video_id in video_ids:
             try:
-                comments_response = youtube.commentThreads().list(
-                    part="snippet",
-                    videoId=video_id,
-                    maxResults=20,
-                    order="relevance",
-                    textFormat="plainText",
-                ).execute()
-                for item in comments_response.get("items", []):
-                    text = (
-                        item["snippet"]["topLevelComment"]["snippet"].get("textDisplay", "")
+                comments_response = (
+                    youtube.commentThreads()
+                    .list(
+                        part="snippet",
+                        videoId=video_id,
+                        maxResults=20,
+                        order="relevance",
+                        textFormat="plainText",
                     )
+                    .execute()
+                )
+                for item in comments_response.get("items", []):
+                    text = item["snippet"]["topLevelComment"]["snippet"].get("textDisplay", "")
                     if text:
                         comments.append(text)
             except Exception:
@@ -538,6 +541,7 @@ async def synthesizer_node(state: GraphState) -> GraphState:
 # ---------------------------------------------------------------------------
 # Graph
 # ---------------------------------------------------------------------------
+
 
 def _route_after_coverage(state: GraphState) -> str:
     """

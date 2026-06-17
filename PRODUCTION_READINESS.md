@@ -287,6 +287,10 @@ auto-deploy is wired in Phase 4). (Undocumented.)
 **GitHub Actions.** Run `ruff` lint + `pytest` on every push, and trigger the Render deploy
 on merge to `main`. Table stakes for a production-aware project, and the visible green checks
 on PRs are exactly the signal a reviewer looks for. (Already noted as build-order step 17.)
+The **Ruff side is ready**: `backend/ruff.toml` exists (rules `E/W/F/I/B/UP/C4`, `target-version
+= "py310"` to match the local venv, FastAPI `Depends()` whitelisted) and the backend is
+lint-clean + formatted, so the CI workflow just needs to call `ruff check` / `ruff format
+--check`. The `pytest` half waits on the Phase 2 suite.
 
 ---
 

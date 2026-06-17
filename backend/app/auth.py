@@ -44,7 +44,7 @@ async def get_current_user(
         unverified = jwt.decode(token, options={"verify_signature": False})
         issuer: str = unverified["iss"]
     except (jwt.PyJWTError, KeyError):
-        raise unauth
+        raise unauth from None
 
     if issuer != settings.clerk_issuer:
         raise unauth
@@ -68,7 +68,7 @@ async def get_current_user(
             issuer=settings.clerk_issuer,
         )
     except jwt.PyJWTError:
-        raise unauth
+        raise unauth from None
 
     if payload.get("azp") not in settings.clerk_authorized_parties:
         raise unauth
