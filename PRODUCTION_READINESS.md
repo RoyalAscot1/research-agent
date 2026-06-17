@@ -107,15 +107,22 @@ same falsy-error gotcha the synthesizer-timeout fix relied on. Verified by mocki
 return `""`, whitespace, an empty list, a real string, and a real list-of-parts: the first
 three fail, the last two pass through with the list correctly joined. (Undocumented.)
 
-**Blocking synchronous I/O on the async event loop** (`backend/app/graph/graph.py`, lines
-255, 378). `researcher_node` calls `TavilyClient.search()` and `sentiment_node` calls the
-googleapiclient `.execute()` — both synchronous, blocking network calls — inside `async def`
-nodes run via `_graph.ainvoke`. Because `run_graph` runs in `BackgroundTasks` (the *same*
-event loop as the web server), every Tavily/YouTube call freezes all other incoming requests
-for its full latency; with up to 5 Tavily calls + YouTube fetches per run, the API stalls in
-multi-second chunks under concurrency. This is live today, before any scaling. Fix: wrap the
-calls in `asyncio.to_thread(...)` or use `AsyncTavilyClient`. (A worker-process task queue
-would also resolve it — see Deferred.) Good async-competence signal to fix. (Undocumented.)
+**[deferred] Blocking synchronous I/O on the async event loop** (`backend/app/graph/graph.py`).
+`researcher_node` calls `TavilyClient.search()` and `sentiment_node` calls the googleapiclient
+`.execute()` (one YouTube search + one `commentThreads` call per video) — all synchronous,
+blocking network calls — inside `async def` nodes run via `_graph.ainvoke`. Because `run_graph`
+runs in `BackgroundTasks` (the *same* event loop as the web server), every Tavily/YouTube call
+freezes all other incoming requests for its full latency; with up to 5 Tavily calls + YouTube
+fetches per run, the API stalls in multi-second chunks under concurrency. The in-process
+mitigation is to wrap each call in `asyncio.to_thread(...)` (or use `AsyncTavilyClient`).
+**Deliberately deferred to the durable task queue (see Deferred) rather than fixed in place.**
+The queue is a *superset* fix: moving the whole job out of the web process means these blocking
+calls never touch the API event loop at all, and it simultaneously solves the in-process
+`BackgroundTasks` durability problem — so the `to_thread` patch would be throwaway work we'd rip
+out when the queue lands. For an async-native stack (FastAPI async, async SQLAlchemy,
+`LangGraph.ainvoke`) the queue of choice is **ARQ**, not Celery — see the Deferred entry for the
+rationale. The blocking only bites under *concurrent* users, which a private/recorded
+single-user demo never hits. (Undocumented.)
 
 **Add a unique constraint on `reports.job_id`** (`backend/app/models/models.py` line 51,
 plus a migration). The model declares a one-to-one (`uselist=False`) and `jobs.py` uses
@@ -346,9 +353,15 @@ Documenting them as deliberate deferrals is the right move — and is itself a m
 
 **Durable task queue** (`backend/app/routers/queries.py`, line 35). In-process
 `BackgroundTasks` die on any Render restart or spin-down, leaving a job stuck in `running`
-(the Phase 1 frontend poll cap handles the symptom). Move the job to a durable queue — ARQ
-(async, fits the codebase) or Celery — for real load. Heavy for a portfolio, and a
-private/recorded demo rarely hits the failure. (Durability noted in the docs.)
+(the Phase 1 frontend poll cap handles the symptom). Move the job to a durable queue for real
+load. **Prefer ARQ over Celery here:** the stack is async top to bottom (FastAPI async, async
+SQLAlchemy, `LangGraph.ainvoke`), and ARQ is natively async on Redis, so it runs the graph
+without wrapping every task in `asyncio.run(...)`; Celery is sync-first and pairing it with an
+all-async app invites the "why Celery?" question. This is also the *real* fix for the Phase 1
+blocking-I/O item (it pulls the whole job out of the web process, so the blocking calls never
+touch the API event loop) — which is why that item is deferred here rather than patched with
+`asyncio.to_thread`. Heavy for a portfolio, and a private/recorded demo rarely hits the
+failure. (Durability noted in the docs.)
 
 **Clerk `user.deleted` webhook.** Needs a public HTTPS endpoint (hence post-deploy). No code
 path cleans up when a user deletes their Clerk account, so deleted users leave orphaned rows
