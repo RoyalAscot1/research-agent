@@ -263,7 +263,7 @@ Incorporate this sentiment signal where relevant — note whether public opinion
 - **Task queue** — `BackgroundTasks` runs jobs in the same process as the web server; replace with ARQ (async, fits the codebase) or Celery + Redis for any real load.
 - **Rate limiting** — no per-user query limits; add with `slowapi` on FastAPI.
 - **Cost guardrails** — no cap on Tavily credits per user; track usage and throttle at a threshold before shipping.
-- **Testing** — no test suite; pytest covering the graph nodes and critical API endpoints is the gap between personal project and production system.
+- **Testing** — pytest suite live (`backend/tests/`, 70 tests): graph nodes (re-plan loop, hard caps, fail-safe fallbacks), the auth dependency (incl. forged-token rejection), and the API endpoints (ownership 403 / 404 / follow-up cap 429) — all with external services and the DB faked. See `PRODUCTION_READINESS.md` Phase 2 for scope and the one deliberate gap (DB-constraint behaviour not exercised).
 - **CI/CD** — GitHub Actions running lint + pytest on push and deploying to Render on merge to main; table stakes for a production-aware project (already in build order step 17).
 - **pgvector on Neon (deferred to v2)** — enable via `CREATE EXTENSION vector;` migration when `document_chunks` lands. Gemini `text-embedding-004` produces 768-dimension vectors. Index with `ivfflat` or `hnsw` once chunk volume grows.
 - **FAISS** — in-process vector search library, faster than pgvector at very large scale but requires manual persistence management; pgvector is the right call for this app.

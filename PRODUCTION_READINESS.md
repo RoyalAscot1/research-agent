@@ -179,17 +179,34 @@ frontend relies on for React keys. (Undocumented.)
 
 *Goal: make the "tests" claim true; unblocks CI (Phase 4) and the Maintainability refactors.*
 
-**Test suite** (none exists today; `pytest` + `pytest-asyncio` are already in
-`requirements.txt`). Don't chase a coverage %; build a credible, representative suite:
+**[done] Test suite** (`backend/tests/`, `pytest` + `pytest-asyncio`, both already in
+`requirements.txt`). **Done**: 70 tests, green locally and ruff-clean (so it drops straight
+into Phase 4 CI). No external services touched — LLM/Tavily/YouTube and the DB are all faked.
+Run with `python -m pytest` from `backend/` (venv active). Layout:
 
-- **Graph-node tests** with the LLM / Tavily / YouTube **mocked** — the re-plan loop logic,
-  the hard caps (3 iterations / 5 Tavily calls), and the planner/coverage fail-safe fallbacks.
-- **Auth-dependency test** including a **forged-token rejection** — this doubles as proof the
-  Phase 1 auth-bypass fix works.
-- **Endpoint tests** — ownership 403 / not-found 404, and the follow-up cap 429.
-- A **rate-limit test** (429 past the cap) is added once `slowapi` lands in Phase 3.
+- `tests/unit/` — **Graph-node tests** with the LLM / Tavily / YouTube **mocked**: the re-plan
+  loop, the hard caps (3 iterations / 5 Tavily calls, incl. the coverage short-circuit that
+  asserts the LLM is *never* called once a cap is hit), the planner/coverage fail-safe
+  fallbacks, the synthesizer empty-output and `TimeoutError`-→-non-empty-error gotchas, the
+  sentiment fail-soft paths, and `_route_after_coverage` branching. Plus the **auth-dependency
+  test** — `test_forged_issuer_is_rejected` proves the Phase 1 auth-bypass fix by asserting the
+  JWKS is *never fetched* for a forged `iss`; also bad-signature, `azp`-mismatch,
+  missing/garbage token, and a real happy path (in-test RSA keypair, mocked JWKS, upsert).
+- `tests/api/` — **Endpoint tests** via httpx `ASGITransport`: malformed-UUID 404,
+  not-found 404, ownership 403, and the follow-up cap 429 (with a guard asserting Gemini is
+  *not* called when capped), plus happy paths.
 
-**Done when:** the suite runs green locally. (Already noted in the docs as a gap.)
+**Mocking conventions** (mirrored in `CLAUDE.md` "Testing"): external clients are patched by
+name in `app.graph.graph` (`ChatGoogleGenerativeAI`, `TavilyClient`, `build`); `conftest.py`
+sets dummy env vars *before* any `app.*` import because `config.py` runs `Settings()` at
+import time; endpoint tests use a `FakeSession` + `app.dependency_overrides`, not a real DB.
+
+**Deliberate gap** (documented, not an oversight): because the API layer is tested against a
+fake session (not testcontainers — see the choice rationale above), DB-level constraints
+aren't exercised — notably the follow-up `409` from `uq_follow_ups_report_turn`. A
+testcontainers-Postgres upgrade is the path to closing it if higher fidelity is ever wanted.
+
+- A **rate-limit test** (429 past the cap) is still deferred until `slowapi` lands in Phase 3.
 
 ---
 
