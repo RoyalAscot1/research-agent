@@ -55,7 +55,12 @@ class Report(Base):
     __tablename__ = "reports"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    job_id = Column(UUID(as_uuid=True), ForeignKey("research_jobs.id"), nullable=False)
+    job_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("research_jobs.id"),
+        nullable=False,
+        unique=True,
+    )
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
     report_markdown = Column(Text, nullable=True)
     raw_context = Column(JSONB, nullable=True)

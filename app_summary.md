@@ -103,7 +103,7 @@ research_jobs (
 -- Finished report — linked to job
 reports (
   id UUID PRIMARY KEY,
-  job_id UUID REFERENCES research_jobs(id),
+  job_id UUID UNIQUE REFERENCES research_jobs(id),  -- one report per job
   user_id UUID REFERENCES users(id),
   report_markdown TEXT,          -- the AI-written report
   raw_context JSONB,             -- frozen research payload for follow-ups

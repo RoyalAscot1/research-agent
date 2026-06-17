@@ -124,11 +124,17 @@ out when the queue lands. For an async-native stack (FastAPI async, async SQLAlc
 rationale. The blocking only bites under *concurrent* users, which a private/recorded
 single-user demo never hits. (Undocumented.)
 
-**Add a unique constraint on `reports.job_id`** (`backend/app/models/models.py` line 51,
-plus a migration). The model declares a one-to-one (`uselist=False`) and `jobs.py` uses
+**[done] Add a unique constraint on `reports.job_id`** (`backend/app/models/models.py`,
+plus a migration). ~~The model declares a one-to-one (`uselist=False`) and `jobs.py` uses
 `scalar_one_or_none()` on reports-by-job (line 37–40), but nothing enforces one report per
 job at the DB level — a retry/bug producing two rows makes that query raise
-`MultipleResultsFound` → 500. Cheaper to add before production data exists. (Undocumented.)
+`MultipleResultsFound` → 500. Cheaper to add before production data exists.~~ **Fixed**: added
+`unique=True` to the `job_id` column (matching `User.clerk_user_id` in the same file) and a
+hand-written migration (`uq_reports_job_id`, revision `a1b2c3d4e5f6`) that adds the named
+unique constraint. Verified no duplicate `job_id` rows existed before applying (0 of 14
+reports), ran `alembic upgrade head` cleanly, and confirmed the constraint now exists in
+Postgres (`pg_constraint` shows `uq_reports_job_id`). The DB invariant now backs the ORM's
+`uselist=False` / `scalar_one_or_none()` assumption. (Undocumented.)
 
 **Follow-up race / unique constraint** (`backend/app/routers/reports.py`, line 102, plus
 a new migration). The count → cap-check → insert sequence isn't atomic and has a slow
