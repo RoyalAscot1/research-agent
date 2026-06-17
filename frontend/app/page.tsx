@@ -24,6 +24,8 @@ const PLACEHOLDERS = [
   "Space exploration investment outlook",
 ];
 
+const MAX_POLL_ATTEMPTS = 90; // ~3 minutes at 2s/poll
+
 function useTypewriter(phrases: string[]) {
   const [text, setText] = useState("");
   const [phraseIdx, setPhraseIdx] = useState(0);
@@ -95,20 +97,31 @@ export default function HomePage() {
   const [error, setError]   = useState<string | null>(null);
   const [focused, setFocused] = useState(false);
   const cancelledRef = useRef(false);
+  const pollCountRef = useRef(0);
   const placeholder = useTypewriter(PLACEHOLDERS);
 
   useEffect(() => {
     if (status !== "polling" || !jobId) return;
     cancelledRef.current = false;
+    pollCountRef.current = 0;
 
     const poll = async () => {
       if (cancelledRef.current) return;
+      pollCountRef.current += 1;
+      if (pollCountRef.current > MAX_POLL_ATTEMPTS) {
+        setStatus("error");
+        setError("This is taking longer than expected. Please try again.");
+        return;
+      }
       try {
         const token = await resolveToken(getToken);
         if (!token) { setStatus("error"); setError("Session expired. Please sign in again."); return; }
         const data = await api.getJobStatus(token, jobId);
         if (data.status === "done" && data.report_id) {
           router.push(`/chat/${data.report_id}`);
+        } else if (data.status === "done") {
+          setStatus("error");
+          setError("Research finished but no report was generated. Please try again.");
         } else if (data.status === "failed") {
           setStatus("error");
           setError("Research failed. Please try again.");

@@ -2,6 +2,7 @@ import uuid
 from datetime import datetime, timezone
 
 from sqlalchemy import (
+    TIMESTAMP,
     Column,
     Enum,
     Float,
@@ -9,7 +10,7 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
-    TIMESTAMP,
+    UniqueConstraint,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import relationship
@@ -55,7 +56,12 @@ class Report(Base):
     __tablename__ = "reports"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    job_id = Column(UUID(as_uuid=True), ForeignKey("research_jobs.id"), nullable=False)
+    job_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("research_jobs.id"),
+        nullable=False,
+        unique=True,
+    )
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
     report_markdown = Column(Text, nullable=True)
     raw_context = Column(JSONB, nullable=True)
@@ -77,6 +83,9 @@ class Report(Base):
 
 class FollowUp(Base):
     __tablename__ = "follow_ups"
+    __table_args__ = (
+        UniqueConstraint("report_id", "turn_number", name="uq_follow_ups_report_turn"),
+    )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     report_id = Column(UUID(as_uuid=True), ForeignKey("reports.id"), nullable=False)

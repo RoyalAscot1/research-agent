@@ -5,12 +5,14 @@ import jwt
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.database import get_db
 from app.models.models import User
 
-_bearer = HTTPBearer()
+_bearer = HTTPBearer(auto_error=False)
 _jwks_cache: dict[str, dict] = {}
 
 
@@ -25,17 +27,26 @@ async def _get_jwks(issuer: str) -> dict:
 
 
 async def get_current_user(
-    credentials: HTTPAuthorizationCredentials = Depends(_bearer),
+    credentials: HTTPAuthorizationCredentials | None = Depends(_bearer),
     db: AsyncSession = Depends(get_db),
 ) -> User:
-    token = credentials.credentials
     unauth = HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
+
+    # With auto_error=False, a missing/blank Authorization header yields None here
+    # rather than HTTPBearer raising a 403 — return a 401 to match the rest of this
+    # function (and the frontend's "session expired" handling).
+    if credentials is None:
+        raise unauth
+    token = credentials.credentials
 
     try:
         header = jwt.get_unverified_header(token)
         unverified = jwt.decode(token, options={"verify_signature": False})
         issuer: str = unverified["iss"]
     except (jwt.PyJWTError, KeyError):
+        raise unauth from None
+
+    if issuer != settings.clerk_issuer:
         raise unauth
 
     jwks = await _get_jwks(issuer)
@@ -50,8 +61,16 @@ async def get_current_user(
 
     try:
         public_key = jwt.algorithms.RSAAlgorithm.from_jwk(key_data)
-        payload = jwt.decode(token, public_key, algorithms=["RS256"])
+        payload = jwt.decode(
+            token,
+            public_key,
+            algorithms=["RS256"],
+            issuer=settings.clerk_issuer,
+        )
     except jwt.PyJWTError:
+        raise unauth from None
+
+    if payload.get("azp") not in settings.clerk_authorized_parties:
         raise unauth
 
     clerk_user_id: str = payload["sub"]
@@ -61,9 +80,14 @@ async def get_current_user(
     user = result.scalar_one_or_none()
 
     if not user:
-        user = User(id=uuid.uuid4(), clerk_user_id=clerk_user_id, email=email)
-        db.add(user)
+        stmt = (
+            pg_insert(User)
+            .values(id=uuid.uuid4(), clerk_user_id=clerk_user_id, email=email)
+            .on_conflict_do_nothing(index_elements=["clerk_user_id"])
+        )
+        await db.execute(stmt)
         await db.commit()
-        await db.refresh(user)
+        result = await db.execute(select(User).where(User.clerk_user_id == clerk_user_id))
+        user = result.scalar_one_or_none()
 
     return user

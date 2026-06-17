@@ -3,6 +3,7 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import get_current_user
@@ -26,7 +27,7 @@ async def get_report(
     try:
         rid = uuid.UUID(report_id)
     except ValueError:
-        raise HTTPException(status_code=404, detail="Report not found")
+        raise HTTPException(status_code=404, detail="Report not found") from None
     report = await db.get(Report, rid)
     if not report:
         raise HTTPException(status_code=404, detail="Report not found")
@@ -40,9 +41,7 @@ async def get_report(
         completed_in_seconds = round((job.completed_at - job.created_at).total_seconds())
 
     result = await db.execute(
-        select(FollowUp)
-        .where(FollowUp.report_id == report.id)
-        .order_by(FollowUp.turn_number)
+        select(FollowUp).where(FollowUp.report_id == report.id).order_by(FollowUp.turn_number)
     )
     follow_ups = result.scalars().all()
 
@@ -92,7 +91,7 @@ async def create_followup(
     try:
         rid = uuid.UUID(report_id)
     except ValueError:
-        raise HTTPException(status_code=404, detail="Report not found")
+        raise HTTPException(status_code=404, detail="Report not found") from None
     report = await db.get(Report, rid)
     if not report:
         raise HTTPException(status_code=404, detail="Report not found")
@@ -100,9 +99,7 @@ async def create_followup(
         raise HTTPException(status_code=403, detail="Forbidden")
 
     # Enforce 5-follow-up cap
-    count_result = await db.execute(
-        select(func.count()).where(FollowUp.report_id == report.id)
-    )
+    count_result = await db.execute(select(func.count()).where(FollowUp.report_id == report.id))
     existing_count = count_result.scalar_one()
     if existing_count >= 5:
         raise HTTPException(status_code=429, detail="Follow-up limit reached (5 max)")
@@ -113,9 +110,7 @@ async def create_followup(
 
     # Load prior turns for conversation history
     prior_result = await db.execute(
-        select(FollowUp)
-        .where(FollowUp.report_id == report.id)
-        .order_by(FollowUp.turn_number)
+        select(FollowUp).where(FollowUp.report_id == report.id).order_by(FollowUp.turn_number)
     )
     prior_turns = [
         {"turn_number": fu.turn_number, "question": fu.question, "answer": fu.answer}
@@ -142,6 +137,15 @@ async def create_followup(
         turn_number=turn_number,
     )
     db.add(follow_up)
-    await db.commit()
+    try:
+        await db.commit()
+    except IntegrityError:
+        # A concurrent follow-up claimed this turn_number first — the
+        # uq_follow_ups_report_turn constraint rejected the duplicate insert.
+        await db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="A concurrent follow-up was submitted — please retry.",
+        ) from None
 
     return {"answer": answer, "turn_number": turn_number}

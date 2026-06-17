@@ -47,7 +47,7 @@ async def delete_report(
     try:
         rid = uuid.UUID(report_id)
     except ValueError:
-        raise HTTPException(status_code=404, detail="Report not found")
+        raise HTTPException(status_code=404, detail="Report not found") from None
     report = await db.get(Report, rid)
     if not report:
         raise HTTPException(status_code=404, detail="Report not found")
@@ -64,9 +64,7 @@ async def clear_history(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    report_ids_result = await db.execute(
-        select(Report.id).where(Report.user_id == current_user.id)
-    )
+    report_ids_result = await db.execute(select(Report.id).where(Report.user_id == current_user.id))
     report_ids = [row[0] for row in report_ids_result.all()]
 
     if report_ids:

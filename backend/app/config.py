@@ -1,3 +1,4 @@
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -12,6 +13,14 @@ class Settings(BaseSettings):
     langfuse_public_key: str | None = None
     langfuse_secret_key: str | None = None
     langfuse_host: str = "https://us.cloud.langfuse.com"
+    clerk_issuer: str
+    clerk_authorized_parties_raw: str = Field(
+        "http://localhost:3000", validation_alias="CLERK_AUTHORIZED_PARTIES"
+    )
+
+    @property
+    def clerk_authorized_parties(self) -> list[str]:
+        return [p.strip() for p in self.clerk_authorized_parties_raw.split(",")]
 
 
 settings = Settings()

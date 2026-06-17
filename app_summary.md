@@ -103,7 +103,7 @@ research_jobs (
 -- Finished report — linked to job
 reports (
   id UUID PRIMARY KEY,
-  job_id UUID REFERENCES research_jobs(id),
+  job_id UUID UNIQUE REFERENCES research_jobs(id),  -- one report per job
   user_id UUID REFERENCES users(id),
   report_markdown TEXT,          -- the AI-written report
   raw_context JSONB,             -- frozen research payload for follow-ups
@@ -124,7 +124,8 @@ follow_ups (
   question TEXT,
   answer TEXT,
   turn_number INT,               -- 1–5
-  created_at TIMESTAMPTZ
+  created_at TIMESTAMPTZ,
+  UNIQUE(report_id, turn_number)  -- one follow-up per turn, per report
 )
 ```
 
@@ -198,7 +199,7 @@ Follow-ups do NOT re-run the full agent graph. They re-use existing research con
 4. Pass retrieved chunks + conversation history + new question to Gemini
 5–7 same as above
 
-Enforce a hard limit of 5 follow-ups per report at the API level. After 5, return a 403 with a message prompting a new query. The follow-up prompt instructs Gemini: "Answer using only the research above. If the research doesn't cover this, say so clearly. Do not invent new facts."
+Enforce a hard limit of 5 follow-ups per report at the API level. After 5, return a 429 with a message prompting a new query. The follow-up prompt instructs Gemini: "Answer using only the research above. If the research doesn't cover this, say so clearly. Do not invent new facts."
 
 ---
 

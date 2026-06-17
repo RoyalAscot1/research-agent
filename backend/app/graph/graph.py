@@ -1,3 +1,4 @@
+import asyncio
 import uuid
 from datetime import datetime, timezone
 from typing import TypedDict
@@ -5,15 +6,27 @@ from typing import TypedDict
 from googleapiclient.discovery import build
 from langchain_core.messages import HumanMessage
 from langchain_google_genai import ChatGoogleGenerativeAI
+from langfuse import observe
 from langgraph.graph import END, StateGraph
 from pydantic import BaseModel, Field
 from tavily import TavilyClient
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
-from langfuse import observe
 
 from app.config import settings
 from app.database import AsyncSessionLocal
 from app.models.models import Report, ResearchJob
+
+# Hard ceiling on any single Gemini request. Without it a hung LLM call leaves
+# the LangGraph run (and its `research_jobs` row) stuck in `running` forever —
+# the frontend poll cap only surfaces the symptom.
+#
+# Enforced with `asyncio.wait_for` around each `ainvoke`, NOT the constructor's
+# `timeout=` kwarg: the current (deprecated) `google.generativeai` client silently
+# ignores that field — verified that a 0.001s constructor timeout still completed
+# the request. `wait_for` is provider-agnostic and guaranteed to raise. On timeout
+# the per-node try/except blocks turn the error into a fail-soft (planner/coverage)
+# or a `failed` job (synthesizer), instead of hanging.
+_LLM_REQUEST_TIMEOUT_SECONDS = 60
 
 
 class ResearchPlan(BaseModel):
@@ -38,15 +51,15 @@ class GraphState(TypedDict):
     run_sentiment: bool | None
     youtube_search_query: str | None
     sources: list[dict] | None
-    sentiment_scores: dict | None       # {"positive": float, "neutral": float, "negative": float}
-    sentiment_volume: int | None        # number of comments analysed
+    sentiment_scores: dict | None  # {"positive": float, "neutral": float, "negative": float}
+    sentiment_volume: int | None  # number of comments analysed
     report_markdown: str | None
     error: str | None
-    tavily_call_count: int              # running total — checked against the 5-call hard cap
-    iteration_count: int                # running total — checked against the 3-iteration cap
-    coverage_sufficient: bool | None    # set by the coverage-check step each pass through the loop
-    tried_queries: list[str]            # cumulative history of every Tavily query attempted — lets
-                                        # the coverage check avoid proposing near-duplicates of past rounds
+    tavily_call_count: int  # running total — checked against the 5-call hard cap
+    iteration_count: int  # running total — checked against the 3-iteration cap
+    coverage_sufficient: bool | None  # set by the coverage-check step each pass through the loop
+    tried_queries: list[str]  # cumulative history of every Tavily query attempted — lets
+    # the coverage check avoid proposing near-duplicates of past rounds
 
 
 # ---------------------------------------------------------------------------
@@ -88,6 +101,17 @@ Comments analysed: {volume}
 
 Incorporate this sentiment signal where relevant — note whether public opinion is broadly positive, negative, or divided on the topic.\
 """
+
+
+def _content_to_str(content) -> str:
+    """Normalise a LangChain message's `content` to a string.
+
+    `content` is a `str` for most responses but can be a list of parts; join
+    the list into a single string so callers can treat it uniformly.
+    """
+    if isinstance(content, list):
+        return "".join(part if isinstance(part, str) else str(part) for part in content)
+    return content
 
 
 def _format_sources(sources: list[dict]) -> str:
@@ -161,8 +185,11 @@ async def call_gemini_followup(
         question=question,
     )
 
-    response = await llm.ainvoke([HumanMessage(content=prompt)])
-    return response.content
+    response = await asyncio.wait_for(
+        llm.ainvoke([HumanMessage(content=prompt)]),
+        timeout=_LLM_REQUEST_TIMEOUT_SECONDS,
+    )
+    return _content_to_str(response.content)
 
 
 def _derive_overall_sentiment(scores: dict | None) -> str | None:
@@ -209,7 +236,10 @@ async def planner_node(state: GraphState) -> GraphState:
     prompt = _PLANNER_PROMPT.format(query=state["query"])
 
     try:
-        plan: ResearchPlan = await llm.ainvoke([HumanMessage(content=prompt)])
+        plan: ResearchPlan = await asyncio.wait_for(
+            llm.ainvoke([HumanMessage(content=prompt)]),
+            timeout=_LLM_REQUEST_TIMEOUT_SECONDS,
+        )
         return {
             **state,
             "search_queries": plan.search_queries,
@@ -351,7 +381,10 @@ async def coverage_check_node(state: GraphState) -> GraphState:
     )
 
     try:
-        assessment: CoverageAssessment = await llm.ainvoke([HumanMessage(content=prompt)])
+        assessment: CoverageAssessment = await asyncio.wait_for(
+            llm.ainvoke([HumanMessage(content=prompt)]),
+            timeout=_LLM_REQUEST_TIMEOUT_SECONDS,
+        )
         if assessment.sufficient or not assessment.additional_queries:
             return {**state, "coverage_sufficient": True}
         return {
@@ -375,14 +408,18 @@ async def sentiment_node(state: GraphState) -> GraphState:
 
         # Step 1: search for top 5 relevant videos
         yt_query = state.get("youtube_search_query") or state["query"]
-        search_response = youtube.search().list(
-            q=yt_query,
-            part="id",
-            type="video",
-            maxResults=5,
-            order="relevance",
-            videoCaption="any",
-        ).execute()
+        search_response = (
+            youtube.search()
+            .list(
+                q=yt_query,
+                part="id",
+                type="video",
+                maxResults=5,
+                order="relevance",
+                videoCaption="any",
+            )
+            .execute()
+        )
 
         video_ids = [
             item["id"]["videoId"]
@@ -397,17 +434,19 @@ async def sentiment_node(state: GraphState) -> GraphState:
         comments: list[str] = []
         for video_id in video_ids:
             try:
-                comments_response = youtube.commentThreads().list(
-                    part="snippet",
-                    videoId=video_id,
-                    maxResults=20,
-                    order="relevance",
-                    textFormat="plainText",
-                ).execute()
-                for item in comments_response.get("items", []):
-                    text = (
-                        item["snippet"]["topLevelComment"]["snippet"].get("textDisplay", "")
+                comments_response = (
+                    youtube.commentThreads()
+                    .list(
+                        part="snippet",
+                        videoId=video_id,
+                        maxResults=20,
+                        order="relevance",
+                        textFormat="plainText",
                     )
+                    .execute()
+                )
+                for item in comments_response.get("items", []):
+                    text = item["snippet"]["topLevelComment"]["snippet"].get("textDisplay", "")
                     if text:
                         comments.append(text)
             except Exception:
@@ -474,15 +513,35 @@ async def synthesizer_node(state: GraphState) -> GraphState:
                 sentiment_section=sentiment_section,
             )
 
-        response = await llm.ainvoke([HumanMessage(content=prompt)])
-        return {**state, "report_markdown": response.content, "error": None}
+        response = await asyncio.wait_for(
+            llm.ainvoke([HumanMessage(content=prompt)]),
+            timeout=_LLM_REQUEST_TIMEOUT_SECONDS,
+        )
+        # content can be a str or a list of parts depending on the response;
+        # normalise to a string so the emptiness check below is reliable.
+        content = _content_to_str(response.content)
+        if not content or not content.strip():
+            # A blank report with no exception would otherwise be persisted and
+            # marked `done` (run_graph treats a falsy error as success), leaving
+            # the user with an empty report. Flip it to a failure instead.
+            return {
+                **state,
+                "report_markdown": None,
+                "error": "Synthesizer produced an empty report",
+            }
+        return {**state, "report_markdown": content, "error": None}
     except Exception as exc:
-        return {**state, "report_markdown": None, "error": str(exc)}
+        # str(exc) is empty for some exceptions (notably asyncio.TimeoutError),
+        # and run_graph treats a falsy error as success — fall back to the class
+        # name so a timeout reliably flips the job to `failed` instead of
+        # persisting a null report.
+        return {**state, "report_markdown": None, "error": str(exc) or type(exc).__name__}
 
 
 # ---------------------------------------------------------------------------
 # Graph
 # ---------------------------------------------------------------------------
+
 
 def _route_after_coverage(state: GraphState) -> str:
     """
