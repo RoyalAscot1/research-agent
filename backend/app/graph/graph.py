@@ -104,6 +104,19 @@ Incorporate this sentiment signal where relevant — note whether public opinion
 """
 
 
+def _content_to_str(content) -> str:
+    """Normalise a LangChain message's `content` to a string.
+
+    `content` is a `str` for most responses but can be a list of parts; join
+    the list into a single string so callers can treat it uniformly.
+    """
+    if isinstance(content, list):
+        return "".join(
+            part if isinstance(part, str) else str(part) for part in content
+        )
+    return content
+
+
 def _format_sources(sources: list[dict]) -> str:
     lines = []
     for i, s in enumerate(sources, 1):
@@ -179,7 +192,7 @@ async def call_gemini_followup(
         llm.ainvoke([HumanMessage(content=prompt)]),
         timeout=_LLM_REQUEST_TIMEOUT_SECONDS,
     )
-    return response.content
+    return _content_to_str(response.content)
 
 
 def _derive_overall_sentiment(scores: dict | None) -> str | None:
@@ -503,11 +516,7 @@ async def synthesizer_node(state: GraphState) -> GraphState:
         )
         # content can be a str or a list of parts depending on the response;
         # normalise to a string so the emptiness check below is reliable.
-        content = response.content
-        if isinstance(content, list):
-            content = "".join(
-                part if isinstance(part, str) else str(part) for part in content
-            )
+        content = _content_to_str(response.content)
         if not content or not content.strip():
             # A blank report with no exception would otherwise be persisted and
             # marked `done` (run_graph treats a falsy error as success), leaving

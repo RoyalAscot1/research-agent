@@ -12,7 +12,7 @@ from app.config import settings
 from app.database import get_db
 from app.models.models import User
 
-_bearer = HTTPBearer()
+_bearer = HTTPBearer(auto_error=False)
 _jwks_cache: dict[str, dict] = {}
 
 
@@ -27,11 +27,17 @@ async def _get_jwks(issuer: str) -> dict:
 
 
 async def get_current_user(
-    credentials: HTTPAuthorizationCredentials = Depends(_bearer),
+    credentials: HTTPAuthorizationCredentials | None = Depends(_bearer),
     db: AsyncSession = Depends(get_db),
 ) -> User:
-    token = credentials.credentials
     unauth = HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
+
+    # With auto_error=False, a missing/blank Authorization header yields None here
+    # rather than HTTPBearer raising a 403 — return a 401 to match the rest of this
+    # function (and the frontend's "session expired" handling).
+    if credentials is None:
+        raise unauth
+    token = credentials.credentials
 
     try:
         header = jwt.get_unverified_header(token)

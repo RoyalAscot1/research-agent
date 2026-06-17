@@ -153,16 +153,25 @@ frontend relies on for React keys. (Undocumented.)
 
 *Quick wins to fold in here (small, prevent code-review embarrassment):*
 
-- **Coerce `response.content` to `str`** (`backend/app/graph/graph.py`). LangChain's
+- **[done] Coerce `response.content` to `str`** (`backend/app/graph/graph.py`). LangChain's
   `content` can be a string or a list; the return type and the DB write assume it's always a
-  string. **Synthesizer site done** (folded into the empty-output fix above — it now joins the
-  list shape before the emptiness check). **Still open:** `call_gemini_followup` (line 182)
-  returns `response.content` raw, so a list-shaped follow-up answer would be persisted as a
-  non-string. (Undocumented.)
-- **`HTTPBearer()` returns 403, not 401, on a missing token** (`backend/app/auth.py`, line
-  13). `auto_error=True` (the default) raises 403 when the `Authorization` header is absent,
+  string. **Fixed**: extracted a shared `_content_to_str()` helper (joins the list-of-parts
+  shape into a string, passes a plain string through) and routed **both** call sites through
+  it — `call_gemini_followup` now returns `_content_to_str(response.content)` instead of the
+  raw content, and `synthesizer_node`'s previously-inline copy of the same logic was replaced
+  with a call to the helper (dedup, not just an add). The tidy shared-helper option was chosen
+  over inlining since the logic now lived in two places. Verified the helper against a plain
+  string, a list of strings, a list with a non-string part, and an empty string. (Undocumented.)
+- **[done] `HTTPBearer()` returns 403, not 401, on a missing token** (`backend/app/auth.py`).
+  ~~`auto_error=True` (the default) raises 403 when the `Authorization` header is absent,
   but the frontend's "Session expired, sign in again" messaging implies 401. Use
-  `HTTPBearer(auto_error=False)` + an explicit 401. (Undocumented.)
+  `HTTPBearer(auto_error=False)` + an explicit 401.~~ **Fixed**: switched `_bearer` to
+  `HTTPBearer(auto_error=False)` so a missing/blank header yields `None` instead of an
+  auto-403, typed the `credentials` param `… | None`, and added an explicit `if credentials
+  is None: raise unauth` (401) check. The `unauth` 401 was also moved **above** the
+  `token = credentials.credentials` access — otherwise a `None` would `AttributeError` into a
+  500 instead of the clean 401. Verified by calling the dependency directly: a missing header
+  and a garbage token both return 401 (previously 403 and 401 respectively). (Undocumented.)
 
 ---
 
