@@ -206,7 +206,8 @@ fake session (not testcontainers — see the choice rationale above), DB-level c
 aren't exercised — notably the follow-up `409` from `uq_follow_ups_report_turn`. A
 testcontainers-Postgres upgrade is the path to closing it if higher fidelity is ever wanted.
 
-- A **rate-limit test** (429 past the cap) is still deferred until `slowapi` lands in Phase 3.
+- A **rate-limit test** (429 past the cap) was deferred here until `slowapi` landed — **now
+  done** in Phase 3 (`tests/api/test_rate_limit.py`); see the Phase 3 rate-limiting item.
 
 ---
 
@@ -214,12 +215,21 @@ testcontainers-Postgres upgrade is the path to closing it if higher fidelity is 
 
 *Goal: make "Docker + deployment" true, get a live URL, and never expose uncapped paid APIs.*
 
-**Rate limiting / per-user quota** (`backend/app/routers/queries.py`, line 19; also
-`POST /reports/{id}/followup`). Every query fires Tavily, Gemini, and YouTube calls, all
+**[done] Rate limiting / per-user quota** (`backend/app/routers/queries.py`; also
+`POST /reports/{id}/followup`). ~~Every query fires Tavily, Gemini, and YouTube calls, all
 metered or paid. With no cap, a single signed-in user (or a leaked token) can drain your
-quotas and run up cost in minutes. Add `slowapi` to `requirements.txt` and apply per-user
-limits keyed on the Clerk `sub` from the auth dependency (not IP), returning a clean 429.
-**Do this before the deploy goes live**, not after. (Already noted in the docs.)
+quotas and run up cost in minutes.~~ **Fixed**: added `slowapi` and a new `app/rate_limit.py`
+with a `Limiter` keyed on the Clerk user id (not IP) — `get_current_user` now stashes the
+verified `sub` on `request.state.clerk_user_id` and the key function reads it, falling back to
+the remote address if unset. `POST /queries` is capped at `10/hour;3/minute` (where the real
+cost is) and `POST /reports/{id}/followup` at `20/hour;5/minute`; both deliberately generous
+for a low-traffic portfolio app. A `RateLimitExceeded` handler returns a clean **429** in the
+app's `{"detail": ...}` shape with the standard rate-limit headers. Storage is slowapi's
+in-memory backend (per-process, resets on restart) — fine for a single Render instance; a
+shared Redis backend is the multi-instance/durable upgrade (pairs with the deferred ARQ/Redis
+work). Gated by `RATE_LIMIT_ENABLED` (default true; the test suite sets it false so it isn't
+throttled). **Closes the Phase 2 deferred 429 test**: `tests/api/test_rate_limit.py` re-enables
+the limiter and drives `/queries` past the per-minute cap to assert the 429. (Already noted.)
 
 **Add a `.dockerignore`** in `backend/`. The Dockerfile's `COPY . .` currently bakes
 `.env`, `.venv/`, and `__pycache__` into image layers — a secret-leak risk and needless

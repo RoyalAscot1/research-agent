@@ -17,6 +17,9 @@ class Settings(BaseSettings):
     clerk_authorized_parties_raw: str = Field(
         "http://localhost:3000", validation_alias="CLERK_AUTHORIZED_PARTIES"
     )
+    # Per-user API rate limiting. Defaults on; tests set RATE_LIMIT_ENABLED=false so the
+    # suite isn't throttled (the one 429 test re-enables it locally).
+    rate_limit_enabled: bool = True
 
     @property
     def clerk_authorized_parties(self) -> list[str]:

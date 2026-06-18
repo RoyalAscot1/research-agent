@@ -1,6 +1,6 @@
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
@@ -10,6 +10,7 @@ from app.auth import get_current_user
 from app.database import get_db
 from app.graph.graph import call_gemini_followup
 from app.models.models import FollowUp, Report, ResearchJob, User
+from app.rate_limit import FOLLOWUP_LIMIT, limiter
 
 router = APIRouter(tags=["reports"])
 
@@ -81,7 +82,9 @@ async def get_report(
 
 
 @router.post("/reports/{report_id}/followup")
+@limiter.limit(FOLLOWUP_LIMIT)
 async def create_followup(
+    request: Request,
     report_id: str,
     body: FollowUpRequest,
     db: AsyncSession = Depends(get_db),

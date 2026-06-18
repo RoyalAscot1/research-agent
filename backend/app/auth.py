@@ -2,7 +2,7 @@ import uuid
 
 import httpx
 import jwt
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -27,6 +27,7 @@ async def _get_jwks(issuer: str) -> dict:
 
 
 async def get_current_user(
+    request: Request,
     credentials: HTTPAuthorizationCredentials | None = Depends(_bearer),
     db: AsyncSession = Depends(get_db),
 ) -> User:
@@ -75,6 +76,10 @@ async def get_current_user(
 
     clerk_user_id: str = payload["sub"]
     email: str | None = payload.get("email")
+
+    # Hand the verified identity to the rate limiter's key function (app/rate_limit.py),
+    # which keys per user rather than per IP.
+    request.state.clerk_user_id = clerk_user_id
 
     result = await db.execute(select(User).where(User.clerk_user_id == clerk_user_id))
     user = result.scalar_one_or_none()

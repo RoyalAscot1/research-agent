@@ -2,8 +2,10 @@ import os
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from slowapi.errors import RateLimitExceeded
 
 from app.config import settings
+from app.rate_limit import limiter, rate_limit_exceeded_handler
 from app.routers import history, jobs, queries, reports
 
 if settings.langfuse_public_key:
@@ -12,6 +14,9 @@ if settings.langfuse_public_key:
     os.environ["LANGFUSE_HOST"] = settings.langfuse_host
 
 app = FastAPI(title="Lens API", version="0.1.0")
+
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, rate_limit_exceeded_handler)
 
 app.add_middleware(
     CORSMiddleware,

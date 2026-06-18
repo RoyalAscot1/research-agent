@@ -1,6 +1,6 @@
 import uuid
 
-from fastapi import APIRouter, BackgroundTasks, Depends
+from fastapi import APIRouter, BackgroundTasks, Depends, Request
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -8,6 +8,7 @@ from app.auth import get_current_user
 from app.database import get_db
 from app.graph.graph import run_graph
 from app.models.models import ResearchJob, User
+from app.rate_limit import QUERIES_LIMIT, limiter
 
 router = APIRouter(tags=["queries"])
 
@@ -17,7 +18,9 @@ class QueryRequest(BaseModel):
 
 
 @router.post("/queries", status_code=202)
+@limiter.limit(QUERIES_LIMIT)
 async def create_query(
+    request: Request,
     body: QueryRequest,
     background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
