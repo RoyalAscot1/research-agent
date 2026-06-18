@@ -255,18 +255,28 @@ build, not the venv), so a local `pytest` can't prove the trim is safe; the clea
 `docker build`/Render build is the real verification. Same "image hygiene before first
 deploy" theme as `.dockerignore`. (Undocumented.)
 
-**Deploy plumbing** (`backend/app/main.py`, line 18; release step). Set the production
-`FRONTEND_URL`/CORS origin instead of `localhost:3000`, and run `alembic upgrade head` as
-part of the backend release so the schema exists. The frontend is on Vercel and auto-deploys
-from git, so there is no frontend Dockerfile — only the backend is containerized.
-(Partly noted as "step 17 deploy.")
+**Deploy plumbing — no code change, all Render dashboard config.** The app is already
+parameterized for this, so the earlier "edit `main.py:18`" framing is stale:
+- **CORS origin**: `main.py` already reads `settings.frontend_url` (env `FRONTEND_URL`,
+  default `localhost:3000` in `config.py`) — there is no hardcoded origin to edit. Just set
+  `FRONTEND_URL` to the production Vercel URL in Render's env vars. (Chicken-and-egg: the
+  Vercel URL doesn't exist until the frontend deploys, so set this on the circle-back pass.)
+- **Migrations**: the Dockerfile `CMD` only starts uvicorn, so set Render's **Pre-Deploy
+  Command** to `alembic upgrade head` so the schema exists before the app boots. `alembic/env.py`
+  reads the DB URL from the `DATABASE_URL` env var via the async (asyncpg) engine — the same one
+  the app uses — so it just works as long as `DATABASE_URL` is set in the
+  `postgresql+asyncpg://…?ssl=require` form (the Alembic gotcha in `CLAUDE.md`).
+The frontend is on Vercel and auto-deploys from git, so there is no frontend Dockerfile — only
+the backend is containerized. (Partly noted as "step 17 deploy.")
 
 **Wire `/health` as Render's health check** (`backend/app/main.py`, line 30). The endpoint
 already exists; just configure Render to use it. (Undocumented.)
 
-**Flip Tavily `search_depth` from `"basic"` to `"advanced"`** before shipping
-(`backend/app/graph/graph.py`, line 257). This is both a quality and a cost knob; decide
-deliberately. (Already noted in the docs.)
+**[decided: keep `"basic"`] Tavily `search_depth`** (`backend/app/graph/graph.py`, line 257).
+This is both a quality and a cost knob. **Decision: ship `"basic"` (1 credit/search),
+do not flip to `"advanced"`.** The deeper extraction isn't worth the extra
+credit cost; `"advanced"` is the lever to revisit only if source quality ever proves
+insufficient. No longer a pre-deploy action. (Already noted in the docs.)
 
 **Verify the `next build` type error** on the nullable `result`
 (`frontend/app/page.tsx`, line 135). With `strict: true`, `result` may be dereferenced
