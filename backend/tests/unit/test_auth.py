@@ -8,6 +8,7 @@ BEFORE fetching JWKS, so the forgery never gets its key trusted.
 import json
 import time
 import uuid
+from types import SimpleNamespace
 
 import jwt
 import pytest
@@ -142,5 +143,7 @@ async def test_valid_token_returns_user(monkeypatch):
 
 
 # get_current_user is a FastAPI dependency; call its underlying coroutine directly.
+# It writes the verified id to request.state for the rate limiter, so pass a fake request.
 async def get_current_user_call(*, credentials, db):
-    return await auth.get_current_user(credentials=credentials, db=db)
+    request = SimpleNamespace(state=SimpleNamespace())
+    return await auth.get_current_user(request=request, credentials=credentials, db=db)

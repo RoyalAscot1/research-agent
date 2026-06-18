@@ -206,7 +206,8 @@ fake session (not testcontainers — see the choice rationale above), DB-level c
 aren't exercised — notably the follow-up `409` from `uq_follow_ups_report_turn`. A
 testcontainers-Postgres upgrade is the path to closing it if higher fidelity is ever wanted.
 
-- A **rate-limit test** (429 past the cap) is still deferred until `slowapi` lands in Phase 3.
+- A **rate-limit test** (429 past the cap) was deferred here until `slowapi` landed — **now
+  done** in Phase 3 (`tests/api/test_rate_limit.py`); see the Phase 3 rate-limiting item.
 
 ---
 
@@ -214,37 +215,68 @@ testcontainers-Postgres upgrade is the path to closing it if higher fidelity is 
 
 *Goal: make "Docker + deployment" true, get a live URL, and never expose uncapped paid APIs.*
 
-**Rate limiting / per-user quota** (`backend/app/routers/queries.py`, line 19; also
-`POST /reports/{id}/followup`). Every query fires Tavily, Gemini, and YouTube calls, all
+**[done] Rate limiting / per-user quota** (`backend/app/routers/queries.py`; also
+`POST /reports/{id}/followup`). ~~Every query fires Tavily, Gemini, and YouTube calls, all
 metered or paid. With no cap, a single signed-in user (or a leaked token) can drain your
-quotas and run up cost in minutes. Add `slowapi` to `requirements.txt` and apply per-user
-limits keyed on the Clerk `sub` from the auth dependency (not IP), returning a clean 429.
-**Do this before the deploy goes live**, not after. (Already noted in the docs.)
+quotas and run up cost in minutes.~~ **Fixed**: added `slowapi` and a new `app/rate_limit.py`
+with a `Limiter` keyed on the Clerk user id (not IP) — `get_current_user` now stashes the
+verified `sub` on `request.state.clerk_user_id` and the key function reads it, falling back to
+the remote address if unset. `POST /queries` is capped at `10/hour;3/minute` (where the real
+cost is) and `POST /reports/{id}/followup` at `20/hour;5/minute`; both deliberately generous
+for a low-traffic portfolio app. A `RateLimitExceeded` handler returns a clean **429** in the
+app's `{"detail": ...}` shape with the standard rate-limit headers. Storage is slowapi's
+in-memory backend (per-process, resets on restart) — fine for a single Render instance; a
+shared Redis backend is the multi-instance/durable upgrade (pairs with the deferred ARQ/Redis
+work). Gated by `RATE_LIMIT_ENABLED` (default true; the test suite sets it false so it isn't
+throttled). **Closes the Phase 2 deferred 429 test**: `tests/api/test_rate_limit.py` re-enables
+the limiter and drives `/queries` past the per-minute cap to assert the 429. (Already noted.)
 
-**Add a `.dockerignore`** in `backend/`. The Dockerfile's `COPY . .` currently bakes
+**[done] Add a `.dockerignore`** in `backend/`. ~~The Dockerfile's `COPY . .` currently bakes
 `.env`, `.venv/`, and `__pycache__` into image layers — a secret-leak risk and needless
-bloat. (Undocumented.)
+bloat.~~ **Fixed**: added `backend/.dockerignore` excluding `.env`/`.env.*` (keeps
+`.env.example` via a `!` un-ignore), `.venv`/`venv`, the Python caches (`__pycache__`,
+`*.py[cod]`, `.pytest_cache`, `.ruff_cache`, `.mypy_cache`), `tests/` (not needed in the
+runtime image — Phase 4 CI runs pytest directly, not against the image), and build/VCS/OS
+noise (`.git`, `Dockerfile`, `.dockerignore`, `.DS_Store`). `alembic/` is deliberately *kept*
+in the image since the release step runs `alembic upgrade head`. Not yet exercised by a local
+`docker build` — the filter is verified the first time the image is built (locally or on
+Render). (Undocumented.)
 
-**Drop unused heavyweight dependencies** (`backend/requirements.txt`). `chromadb==0.5.18`,
+**[done] Drop unused heavyweight dependencies** (`backend/requirements.txt`). ~~`chromadb==0.5.18`,
 `nltk==3.9.1`, and `python-dotenv==1.0.1` are imported nowhere (confirmed by grep).
 `chromadb` is the costly one — it drags in `onnxruntime` and adds hundreds of MB to the
 image and to every build; `nltk` is redundant (`vaderSentiment` is standalone) and
 `python-dotenv` is unused (pydantic-settings reads `.env` itself). `chromadb` likely landed
-in anticipation of the v2 vector work that became pgvector. Same "image hygiene before first
+in anticipation of the v2 vector work that became pgvector.~~ **Fixed**: removed all three
+lines from `requirements.txt` after re-confirming with a fresh `grep -rniE
+"chromadb|chroma|\bnltk\b|dotenv"` across `backend/**/*.py` (excluding `.venv`) — zero matches.
+The local `.venv` still has them physically installed (removal only affects the next image
+build, not the venv), so a local `pytest` can't prove the trim is safe; the clean
+`docker build`/Render build is the real verification. Same "image hygiene before first
 deploy" theme as `.dockerignore`. (Undocumented.)
 
-**Deploy plumbing** (`backend/app/main.py`, line 18; release step). Set the production
-`FRONTEND_URL`/CORS origin instead of `localhost:3000`, and run `alembic upgrade head` as
-part of the backend release so the schema exists. The frontend is on Vercel and auto-deploys
-from git, so there is no frontend Dockerfile — only the backend is containerized.
-(Partly noted as "step 17 deploy.")
+**Deploy plumbing — no code change, all Render dashboard config.** The app is already
+parameterized for this, so the earlier "edit `main.py:18`" framing is stale:
+- **CORS origin**: `main.py` already reads `settings.frontend_url` (env `FRONTEND_URL`,
+  default `localhost:3000` in `config.py`) — there is no hardcoded origin to edit. Just set
+  `FRONTEND_URL` to the production Vercel URL in Render's env vars. (Chicken-and-egg: the
+  Vercel URL doesn't exist until the frontend deploys, so set this on the circle-back pass.)
+- **Migrations**: the Dockerfile `CMD` only starts uvicorn, so set Render's **Pre-Deploy
+  Command** to `alembic upgrade head` so the schema exists before the app boots. `alembic/env.py`
+  reads the DB URL from the `DATABASE_URL` env var via the async (asyncpg) engine — the same one
+  the app uses — so it just works as long as `DATABASE_URL` is set in the
+  `postgresql+asyncpg://…?ssl=require` form (the Alembic gotcha in `CLAUDE.md`).
+The frontend is on Vercel and auto-deploys from git, so there is no frontend Dockerfile — only
+the backend is containerized. (Partly noted as "step 17 deploy.")
 
 **Wire `/health` as Render's health check** (`backend/app/main.py`, line 30). The endpoint
 already exists; just configure Render to use it. (Undocumented.)
 
-**Flip Tavily `search_depth` from `"basic"` to `"advanced"`** before shipping
-(`backend/app/graph/graph.py`, line 257). This is both a quality and a cost knob; decide
-deliberately. (Already noted in the docs.)
+**[decided: keep `"basic"`] Tavily `search_depth`** (`backend/app/graph/graph.py`, line 257).
+This is both a quality and a cost knob. **Decision: ship `"basic"` (1 credit/search),
+do not flip to `"advanced"`.** The deeper extraction isn't worth the extra
+credit cost; `"advanced"` is the lever to revisit only if source quality ever proves
+insufficient. No longer a pre-deploy action. (Already noted in the docs.)
 
 **Verify the `next build` type error** on the nullable `result`
 (`frontend/app/page.tsx`, line 135). With `strict: true`, `result` may be dereferenced
@@ -267,10 +299,11 @@ keys is much faster; do this only if you want a publicly signable-in URL. (Partl
 above readies the image/config; this is the step that produces a live backend URL, and it
 gates Phase 4's auto-deploy-on-merge. Concretely: (1) create a Render **Web Service** from the
 repo with `backend/` as the root and the existing `backend/Dockerfile` as the runtime; (2)
-**bind to Render's `$PORT`** — the Dockerfile currently hardcodes `--port 8000`
-(`backend/Dockerfile`, line 11), but Render injects `$PORT` and routes to it, so change the
-CMD to `--port ${PORT:-8000}` (or set Render's port to 8000) or the service won't receive
-traffic; (3) set every backend env var from `backend/.env.example` in the Render dashboard
+**bind to Render's `$PORT`** — **[done]** the Dockerfile CMD now binds to `${PORT:-8000}`
+(`backend/Dockerfile`, line 11) so it uses Render's injected `$PORT` and falls back to 8000
+locally. Note the CMD was switched from exec-form (`["uvicorn", ...]`) to shell-form
+(`sh -c "..."`) because the exec form does not expand env vars — `${PORT}` would be passed
+literally; (3) set every backend env var from `backend/.env.example` in the Render dashboard
 (`DATABASE_URL`, `GEMINI_API_KEY`, `TAVILY_API_KEY`, `YOUTUBE_API_KEY`, the `LANGFUSE_*`
 keys, and `FRONTEND_URL` set to the Vercel URL once known — they reference each other, so
 expect to circle back); (4) set the **health check path to `/health`** (the wiring item

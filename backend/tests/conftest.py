@@ -14,6 +14,8 @@ os.environ.setdefault("TAVILY_API_KEY", "test-tavily-key")
 os.environ.setdefault("YOUTUBE_API_KEY", "test-youtube-key")
 os.environ.setdefault("CLERK_ISSUER", "https://clerk.test.example")
 os.environ.setdefault("CLERK_AUTHORIZED_PARTIES", "http://localhost:3000")
+# Off by default so the suite isn't throttled; the dedicated 429 test re-enables it.
+os.environ.setdefault("RATE_LIMIT_ENABLED", "false")
 
 import uuid  # noqa: E402
 from types import SimpleNamespace  # noqa: E402

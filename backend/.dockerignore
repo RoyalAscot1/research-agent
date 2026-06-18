@@ -1,0 +1,28 @@
+# Secrets — never bake these into image layers
+.env
+.env.*
+!.env.example
+
+# Virtualenvs (built for the local machine, not the image)
+.venv
+venv
+
+# Python caches and compiled files
+__pycache__
+*.py[cod]
+*$py.class
+.pytest_cache
+.ruff_cache
+.mypy_cache
+
+# Tests (not needed in the runtime image)
+tests
+
+# Tooling / VCS
+.git
+.gitignore
+.dockerignore
+Dockerfile
+
+# OS cruft
+.DS_Store

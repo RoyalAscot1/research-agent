@@ -50,9 +50,6 @@ prisma/generated/
 .env*.local
 !.env.local.example
 
-# ── Docker ────────────────────────────────────────────────────────────────────
-*.dockerignore
-
 # ── OS / editor ───────────────────────────────────────────────────────────────
 .DS_Store
 Thumbs.db
