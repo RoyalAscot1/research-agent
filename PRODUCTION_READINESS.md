@@ -231,16 +231,28 @@ work). Gated by `RATE_LIMIT_ENABLED` (default true; the test suite sets it false
 throttled). **Closes the Phase 2 deferred 429 test**: `tests/api/test_rate_limit.py` re-enables
 the limiter and drives `/queries` past the per-minute cap to assert the 429. (Already noted.)
 
-**Add a `.dockerignore`** in `backend/`. The Dockerfile's `COPY . .` currently bakes
+**[done] Add a `.dockerignore`** in `backend/`. ~~The Dockerfile's `COPY . .` currently bakes
 `.env`, `.venv/`, and `__pycache__` into image layers — a secret-leak risk and needless
-bloat. (Undocumented.)
+bloat.~~ **Fixed**: added `backend/.dockerignore` excluding `.env`/`.env.*` (keeps
+`.env.example` via a `!` un-ignore), `.venv`/`venv`, the Python caches (`__pycache__`,
+`*.py[cod]`, `.pytest_cache`, `.ruff_cache`, `.mypy_cache`), `tests/` (not needed in the
+runtime image — Phase 4 CI runs pytest directly, not against the image), and build/VCS/OS
+noise (`.git`, `Dockerfile`, `.dockerignore`, `.DS_Store`). `alembic/` is deliberately *kept*
+in the image since the release step runs `alembic upgrade head`. Not yet exercised by a local
+`docker build` — the filter is verified the first time the image is built (locally or on
+Render). (Undocumented.)
 
-**Drop unused heavyweight dependencies** (`backend/requirements.txt`). `chromadb==0.5.18`,
+**[done] Drop unused heavyweight dependencies** (`backend/requirements.txt`). ~~`chromadb==0.5.18`,
 `nltk==3.9.1`, and `python-dotenv==1.0.1` are imported nowhere (confirmed by grep).
 `chromadb` is the costly one — it drags in `onnxruntime` and adds hundreds of MB to the
 image and to every build; `nltk` is redundant (`vaderSentiment` is standalone) and
 `python-dotenv` is unused (pydantic-settings reads `.env` itself). `chromadb` likely landed
-in anticipation of the v2 vector work that became pgvector. Same "image hygiene before first
+in anticipation of the v2 vector work that became pgvector.~~ **Fixed**: removed all three
+lines from `requirements.txt` after re-confirming with a fresh `grep -rniE
+"chromadb|chroma|\bnltk\b|dotenv"` across `backend/**/*.py` (excluding `.venv`) — zero matches.
+The local `.venv` still has them physically installed (removal only affects the next image
+build, not the venv), so a local `pytest` can't prove the trim is safe; the clean
+`docker build`/Render build is the real verification. Same "image hygiene before first
 deploy" theme as `.dockerignore`. (Undocumented.)
 
 **Deploy plumbing** (`backend/app/main.py`, line 18; release step). Set the production
