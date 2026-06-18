@@ -215,6 +215,15 @@ testcontainers-Postgres upgrade is the path to closing it if higher fidelity is 
 
 *Goal: make "Docker + deployment" true, get a live URL, and never expose uncapped paid APIs.*
 
+**✅ Phase 3 complete — deployed and verified end-to-end.** Backend live on **Render** (Docker,
+`/health` check), frontend live on **Vercel** at `https://lens-research.vercel.app`. A full
+sign-in → query → report → follow-up works in production. Three deploy-time issues surfaced and
+were fixed (all captured in `CLAUDE.md` gotchas): the unused frontend Prisma client broke the
+Vercel build (removed), Clerk's `middleware.ts` failed on the Edge runtime (renamed to `proxy.ts`
+→ Node.js runtime), and a Vercel "No framework detected" 404 (Root Directory + Framework Preset
+settings). Still on Clerk **dev** keys and Tavily `"basic"` (both deliberate). Item-level status
+below.
+
 **[done] Rate limiting / per-user quota** (`backend/app/routers/queries.py`; also
 `POST /reports/{id}/followup`). ~~Every query fires Tavily, Gemini, and YouTube calls, all
 metered or paid. With no cap, a single signed-in user (or a leaked token) can drain your
@@ -278,11 +287,15 @@ do not flip to `"advanced"`.** The deeper extraction isn't worth the extra
 credit cost; `"advanced"` is the lever to revisit only if source quality ever proves
 insufficient. No longer a pre-deploy action. (Already noted in the docs.)
 
-**Verify the `next build` type error** on the nullable `result`
-(`frontend/app/page.tsx`, line 135). With `strict: true`, `result` may be dereferenced
-while still possibly-null across the try/catch; if real, this blocks the Vercel build.
-Turbopack dev mode skips typechecking, so it may be hidden right now — confirm with a build
-before relying on the deploy. (Undocumented.)
+**[done — not a real issue] Verify the `next build` type error** on the nullable `result`
+(`frontend/app/page.tsx`, now line 148). The worry: with `strict: true`, `result` might be
+dereferenced while still possibly-null across the try/catch, which would block the Vercel
+build (Turbopack dev mode skips typechecking, so it could have been hidden). **Verified by
+running a real `npm run build` (Node 20):** TypeScript completed clean, no errors — the
+`let result: {...} | null = null` pattern type-checks fine. The Vercel build is not at risk
+from this. (Build did surface one *non-blocking* deprecation warning — Next.js 16 wants the
+`middleware` file renamed to `proxy`; left as-is since it's a Clerk-touching rename and only
+a warning, not a build failure.) (Undocumented.)
 
 **Clerk production instance** — *only needed for a public sign-in demo.* Clerk dev and
 production are separate instances, not a toggle. Create the production instance, swap the
@@ -295,7 +308,16 @@ breaks on a production instance until you create a Google Cloud OAuth app and pl
 ID/secret into Clerk. **Decision point:** for a portfolio, a private/recorded demo on dev
 keys is much faster; do this only if you want a publicly signable-in URL. (Partly noted.)
 
-**Create & deploy the Render backend service — the actual deploy, not just prep.** Everything
+**[done] Create & deploy the Render backend service — the actual deploy, not just prep.**
+**Done**: the backend is live as a Render Docker Web Service (root `backend/`, the existing
+`Dockerfile`), all env vars set in the dashboard, health check `/health`, `FRONTEND_URL` +
+`CLERK_AUTHORIZED_PARTIES` pointed at the Vercel URL, and `GET /health` returns 200 on the live
+URL. One deviation from the prep below: **`alembic upgrade head` was *not* wired as a pre-deploy
+command** — Render's Pre-Deploy Command is a paid feature, and the live Neon DB was already at
+head (same DB used in dev), so migrations were left manual rather than baked into container
+startup. If a future migration ships, either run `alembic upgrade head` against the prod DB
+manually or fold it into the Dockerfile `CMD`. Original prep notes retained below for reference.
+Everything
 above readies the image/config; this is the step that produces a live backend URL, and it
 gates Phase 4's auto-deploy-on-merge. Concretely: (1) create a Render **Web Service** from the
 repo with `backend/` as the root and the existing `backend/Dockerfile` as the runtime; (2)
@@ -313,7 +335,17 @@ URL. **Sequence this after the `.dockerignore`, dropped-deps, and deploy-plumbin
 they all have to be true *in the image you ship here.* (Undocumented — the prep was listed but
 the deploy action itself was missing.)
 
-**Set up the Vercel frontend project + first deploy.** The frontend has no Dockerfile (Vercel
+**[done] Set up the Vercel frontend project + first deploy.** **Done**: live at
+`https://lens-research.vercel.app`, Root Directory `frontend`, Framework Preset Next.js,
+env vars `NEXT_PUBLIC_API_URL` (→ Render) + the two Clerk keys set (`DATABASE_URL` deliberately
+skipped), auto-deploy on push to `main`, and the backend circle-back (`FRONTEND_URL` +
+`CLERK_AUTHORIZED_PARTIES`) done. **Three issues hit and fixed along the way:** (a) the build
+failed on `lib/prisma.ts` importing the gitignored generated client → removed the dead file
+(see the Prisma stack Maintainability item, partly done); (b) the build then failed with "Edge
+Function references unsupported modules" because Clerk's `middleware.ts` ran on the Edge runtime
+→ renamed to `proxy.ts` (Node.js runtime); (c) a "No framework detected" 404-on-everything →
+Vercel Framework Preset/Root Directory settings. All three are now `CLAUDE.md` gotchas so they
+don't recur. Original prep notes retained below. The frontend has no Dockerfile (Vercel
 builds it from git), so "deploy" here means project setup, not containerization: (1) import
 the repo into Vercel with `frontend/` as the project root; (2) set the frontend env vars from
 `frontend/.env.local.example` in the Vercel dashboard — `NEXT_PUBLIC_API_URL` pointing at the
@@ -497,7 +529,12 @@ remove it. Separately, `frontend/public/` still holds the five default `create-n
 them (same `create-next-app` leftover theme as the stale `frontend/README.md` in Phase 6).
 Both are trivial, zero-risk dead-weight removals. (Undocumented.)
 
-**Remove the unused Prisma stack from the frontend** (`frontend/`). Prisma is configured but
+**[partly done] Remove the unused Prisma stack from the frontend** (`frontend/`). **Update:**
+option (a) is underway — `lib/prisma.ts` was deleted during the Vercel deploy (it broke the
+build by importing the gitignored generated client), and `DATABASE_URL` was never set on Vercel.
+**Still to drop for full cleanup:** the `prisma`, `@prisma/client`, `@prisma/adapter-pg`, `pg`,
+and `@types/pg` deps in `package.json`, plus `prisma.config.ts`, `prisma/schema.prisma`, and the
+gitignored `lib/generated/` tree. Original analysis below. Prisma is configured but
 plays *no runtime role*: the client in `lib/prisma.ts` is never imported, the generated types
 under `lib/generated/prisma/` are never imported (the frontend's types are hand-defined in
 `lib/api.ts`), and there are no Next.js API routes — all data access goes browser →
