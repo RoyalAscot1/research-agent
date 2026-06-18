@@ -289,10 +289,11 @@ keys is much faster; do this only if you want a publicly signable-in URL. (Partl
 above readies the image/config; this is the step that produces a live backend URL, and it
 gates Phase 4's auto-deploy-on-merge. Concretely: (1) create a Render **Web Service** from the
 repo with `backend/` as the root and the existing `backend/Dockerfile` as the runtime; (2)
-**bind to Render's `$PORT`** — the Dockerfile currently hardcodes `--port 8000`
-(`backend/Dockerfile`, line 11), but Render injects `$PORT` and routes to it, so change the
-CMD to `--port ${PORT:-8000}` (or set Render's port to 8000) or the service won't receive
-traffic; (3) set every backend env var from `backend/.env.example` in the Render dashboard
+**bind to Render's `$PORT`** — **[done]** the Dockerfile CMD now binds to `${PORT:-8000}`
+(`backend/Dockerfile`, line 11) so it uses Render's injected `$PORT` and falls back to 8000
+locally. Note the CMD was switched from exec-form (`["uvicorn", ...]`) to shell-form
+(`sh -c "..."`) because the exec form does not expand env vars — `${PORT}` would be passed
+literally; (3) set every backend env var from `backend/.env.example` in the Render dashboard
 (`DATABASE_URL`, `GEMINI_API_KEY`, `TAVILY_API_KEY`, `YOUTUBE_API_KEY`, the `LANGFUSE_*`
 keys, and `FRONTEND_URL` set to the Vercel URL once known — they reference each other, so
 expect to circle back); (4) set the **health check path to `/health`** (the wiring item
