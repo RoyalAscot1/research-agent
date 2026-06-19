@@ -10,10 +10,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.database import get_db
+from app.logging_config import get_logger
 from app.models.models import User
 
 _bearer = HTTPBearer(auto_error=False)
 _jwks_cache: dict[str, dict] = {}
+log = get_logger(__name__)
 
 
 async def _get_jwks(issuer: str) -> dict:
@@ -37,6 +39,7 @@ async def get_current_user(
     # rather than HTTPBearer raising a 403 — return a 401 to match the rest of this
     # function (and the frontend's "session expired" handling).
     if credentials is None:
+        log.warning("auth.rejected", reason="missing_token")
         raise unauth
     token = credentials.credentials
 
@@ -45,9 +48,11 @@ async def get_current_user(
         unverified = jwt.decode(token, options={"verify_signature": False})
         issuer: str = unverified["iss"]
     except (jwt.PyJWTError, KeyError):
+        log.warning("auth.rejected", reason="malformed_token")
         raise unauth from None
 
     if issuer != settings.clerk_issuer:
+        log.warning("auth.rejected", reason="iss_mismatch", issuer=issuer)
         raise unauth
 
     jwks = await _get_jwks(issuer)
@@ -58,6 +63,7 @@ async def get_current_user(
         jwks = await _get_jwks(issuer)
         key_data = next((k for k in jwks["keys"] if k["kid"] == header.get("kid")), None)
     if not key_data:
+        log.warning("auth.rejected", reason="unknown_kid")
         raise unauth
 
     try:
@@ -69,9 +75,11 @@ async def get_current_user(
             issuer=settings.clerk_issuer,
         )
     except jwt.PyJWTError:
+        log.warning("auth.rejected", reason="bad_signature")
         raise unauth from None
 
     if payload.get("azp") not in settings.clerk_authorized_parties:
+        log.warning("auth.rejected", reason="azp_mismatch", azp=payload.get("azp"))
         raise unauth
 
     clerk_user_id: str = payload["sub"]

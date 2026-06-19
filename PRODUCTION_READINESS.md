@@ -418,41 +418,51 @@ merged to `main`, future PRs into `main` trigger it too.
 *Goal: complete the three-layer story — logs + tracing + alerting. Most impressive once the
 app is deployed and producing real logs, which is why it follows Phase 3.*
 
-**Structured logging** (whole backend — no logging exists today; `print`-free but also
-log-free). A strong portfolio signal for the "production-grade observability" story, so do it
-properly rather than scattering `print`s. Concretely:
+**[done] Structured logging** (whole backend). ~~No logging exists today; `print`-free but also
+log-free.~~ **Done** on the `phase-5-logging` branch (purely additive — all 71 tests stayed green
+unchanged; ruff clean + formatted). Implementation:
 
-  - **Pick a logger.** `structlog` emitting JSON (or stdlib `logging` with a JSON formatter)
-    configured once at startup in `main.py`. JSON logs are greppable/queryable in Render's
-    log stream and any future aggregator.
-  - **Thread a correlation ID.** Generate a `job_id`-scoped (and per-request) id and bind it
-    so every line for one research run is filterable end to end — planner → researcher →
-    coverage → sentiment → synthesizer → DB write.
-  - **Log at node boundaries.** Each graph node should log entry/exit with inputs, key
-    outputs, and latency (e.g. sub-query count, `tavily_call_count`, `iteration_count`,
-    sources found, sentiment volume, coverage decision). This makes the re-plan loop's
-    behavior visible without opening Langfuse.
-  - **Stop swallowing errors silently** (`backend/app/graph/graph.py`, lines 266, 413, 447,
-    and the planner/coverage fallbacks). The bare `except Exception: pass` blocks mean a bad
-    API key or a Tavily/YouTube outage produces a silent empty report with no signal —
-    `log.warning(...)`/`log.exception(...)` at minimum so the failure is visible while the
-    node still fails soft.
-  - **Log the auth and request-lifecycle events** — token rejections (meaningful once the
-    Phase 1 auth fix lands), job created/started/done/failed transitions, follow-up cap hits.
-  - **Set log levels deliberately** — INFO for lifecycle/node boundaries, WARNING for
-    fail-soft degradations, ERROR/exception for the synthesizer failure and DB rollback
-    paths in `run_graph`.
+  - **Logger**: `structlog` emitting one JSON line per event to stdout, configured once via
+    `configure_logging()` in the new `app/logging_config.py`, called at the top of `main.py`.
+    Stdlib/uvicorn logs are routed through the same JSON renderer so the stream is uniform.
+  - **Correlation IDs**: `bind_job_id(job_id)` at the top of `run_graph` binds the id to
+    `structlog.contextvars` so every line for one research run is filterable end to end
+    (cleared in a `finally`). A `main.py` request-middleware binds a per-request id, logs
+    `request.complete`/`request.error` (method/path/status/latency), and echoes it as the
+    `X-Request-ID` response header.
+  - **Node boundaries**: `planner.complete`, `researcher.complete` (sources/tavily_calls/
+    iteration), `coverage.decision` (`reason="hard_cap"|"model"`, `sufficient`),
+    `sentiment.complete`, `synthesizer.complete` — the re-plan loop is now visible without
+    opening Langfuse.
+  - **Silent errors now speak**: the seven `except Exception: pass`/swallow blocks in
+    `graph.py` log warnings (`tavily.search_failed`, `researcher.failed`, `sentiment.failed`,
+    `coverage.check_failed`, `planner.fallback`, `synthesizer.failed`/`synthesizer.empty_report`;
+    the expected comments-disabled skip is DEBUG). The worst was `run_graph`'s outer catch,
+    which discarded DB exceptions entirely and now `log.exception`s.
+  - **Auth + lifecycle**: `auth.rejected` (WARNING) with a `reason`
+    (`missing_token`/`malformed_token`/`iss_mismatch`/`unknown_kid`/`bad_signature`/
+    `azp_mismatch`) — **never logging the token itself**; `job.created`, `followup.cap_reached`,
+    `followup.conflict`, `followup.created`.
+  - **Levels**: INFO for lifecycle/node boundaries, WARNING for fail-soft degradations,
+    `log.exception` for the synthesizer failure and the `run_graph` DB-rollback path.
+  - **Config**: gated by `LOG_LEVEL` (default INFO) + `ENVIRONMENT` (default development),
+    both optional `Settings` fields with defaults (no `conftest.py` dummy needed).
 
-  Note this **complements** the already-live Langfuse tracing rather than duplicating it:
+  Verified live by smoke-testing the JSON output (job_id binds then clears) and hitting
+  `/health` through a real ASGI request (the middleware emitted `request.complete` + set
+  `X-Request-ID`). **Complements** the already-live Langfuse tracing rather than duplicating it:
   Langfuse captures LLM-call traces (prompts, outputs, per-node latency); structured logs
   cover the non-LLM operational surface — DB writes, auth, Tavily/YouTube failures, and the
   request lifecycle — and are what you'll actually grep in Render when something breaks.
-  (Logging noted only narrowly in the docs; the broader story is undocumented.)
+  (Undocumented before this pass; now in `CLAUDE.md` Current state + a "Logging" gotcha.)
 
 **Sentry for error alerting** (`backend/app/main.py` startup + `run_graph`). A ~two-line
 `sentry-sdk` init gives real error capture and alerting on top of the logs above — logs tell
 you what happened after you go looking; Sentry tells you *that* something broke without you
-looking. Wire it once logging exists. (Already noted in the docs.)
+looking. Wire it once logging exists. **Now unblocked** — the structured-logging half above is
+done, so this is the remaining Phase 5 piece; planned for its own branch (the `phase-5-logging`
+branch is deliberately logging-only). The init should be guarded by a `SENTRY_DSN` setting so
+it's a no-op locally and in tests. (Already noted in the docs.)
 
 ---
 
