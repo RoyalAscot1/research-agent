@@ -374,34 +374,42 @@ The **Ruff side is ready**: `backend/ruff.toml` exists (rules `E/W/F/I/B/UP/C4`,
 lint-clean + formatted, so the CI workflow just needs to call `ruff check` / `ruff format
 --check`. The `pytest` half waits on the Phase 2 suite.
 
-**[in progress] CI workflow added** (`.github/workflows/ci.yml`). Two parallel jobs:
+**[done] CI workflow live** (`.github/workflows/ci.yml`). Two parallel jobs:
 `lint` (`ruff check .` + `ruff format --check .`) and `test` (`python -m pytest`), each set
 up with `working-directory: backend`, **Python 3.12 to match `backend/Dockerfile`** (not the
 local 3.10 venv — CI should exercise the version production runs), `actions/setup-python`
 pip-caching keyed on `backend/requirements.txt`, and a `concurrency` group that cancels an
-in-progress run when newer commits land on the same ref. `ruff` and `pytest` both come from
-`requirements.txt` (pinned `ruff==0.7.0`, `pytest==8.3.3`), so a single `pip install -r
-requirements.txt` provides both tools. Triggers: `pull_request` into `main` (the checks
-branch protection will gate on) and `push` to any branch (early feedback). All three checks
-were **verified green locally before commit** (71 passed, ruff clean). The jobs are named
-`lint` / `test` so they surface as two distinct, selectable status checks.
+in-progress run when newer commits land on the same ref. Uses the **Node 24 action majors**
+(`actions/checkout@v5`, `actions/setup-python@v6`) — the `@v4`/`@v5` pair emitted two "Node 20
+is deprecated" runner annotations, the bump cleared both (verified 2 → 0 via the check-runs
+API). `ruff` and `pytest` both come from `requirements.txt` (pinned `ruff==0.7.0`,
+`pytest==8.3.3`), so a single `pip install -r requirements.txt` provides both tools. Triggers:
+`pull_request` into `main` and `push` to any branch (early feedback). **Verified green on PRs
+and on `main`** (merge commit `ba1bfa8`), 71 passed + ruff clean, zero annotations. The jobs
+are named `lint` / `test` so they surface as two distinct, selectable status checks.
 
-**Still to do for Phase 4:**
-1. Push the branch and confirm the first run goes green on GitHub's Actions tab (a check must
-   run at least once before it can be marked required).
-2. **Branch protection on `main`** (GitHub Settings → Branches / Rulesets — dashboard config,
-   not a repo file): require a pull request before merging (blocks direct pushes), require the
-   `lint` + `test` status checks to pass, "require branches to be up to date before merging",
-   and **include administrators** so the rules apply to the solo owner too. This is what makes
-   "can't merge broken code" real — and, since deploys fire from `main`, what keeps broken code
-   from deploying.
-3. **Render auto-deploy-on-merge** — the CD half: either leave Render's default auto-deploy on
-   push to `main`, or gate it behind CI via a Render deploy hook called from a `main`-only
-   workflow job. (Vercel already auto-deploys the frontend on push to `main`.)
+**[done] Branch protection on `main`** — a GitHub **ruleset** ("Branch protection",
+enforcement `active`, confirmed via the `/rulesets` API): require a pull request before merging
+(blocks direct pushes), require the `lint` + `test` status checks, require branches up to date,
+block force pushes, **empty bypass list** so it applies to the solo owner too. **Required
+approvals deliberately set to `0`** — GitHub won't let an author approve their own PR, so any
+non-zero value would deadlock merges on a solo repo; the gate's teeth come from "require a PR" +
+the required status checks, not from a human approver. This makes "can't merge broken code"
+real, and since deploys fire from `main`, keeps broken code from deploying.
+
+**Render path-detection caveat (not a bug):** Render auto-deploy respects the service Root
+Directory (`backend/`) and **skips** a deploy when a push changes nothing under it — so the
+CI/docs-only merge (`ba1bfa8`) correctly produced no backend deploy (the running `/health` 200
+is the prior, byte-identical image). The deploy fires on the next push that actually touches
+`backend/`. Vercel builds the frontend on every push to `main`.
+
+**Still optional (Phase 4 polish, not required):** gate the Render deploy behind CI via a
+Render deploy-hook called from a `main`-only workflow job, instead of Render's default
+auto-deploy-on-push. Minimum CD already exists (Render + Vercel both auto-deploy from `main`).
 
 Note the workflow runs on `pull_request` using the file from the PR head branch, so it
-exercises itself on the very first PR even before `ci.yml` exists on `main` — but it must be
-merged to `main` for *future* PRs into `main` to trigger it.
+exercised itself on the very first PR even before `ci.yml` existed on `main`; now that it's
+merged to `main`, future PRs into `main` trigger it too.
 
 ---
 
