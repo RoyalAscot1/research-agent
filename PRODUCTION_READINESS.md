@@ -456,13 +456,27 @@ unchanged; ruff clean + formatted). Implementation:
   request lifecycle — and are what you'll actually grep in Render when something breaks.
   (Undocumented before this pass; now in `CLAUDE.md` Current state + a "Logging" gotcha.)
 
-**Sentry for error alerting** (`backend/app/main.py` startup + `run_graph`). A ~two-line
-`sentry-sdk` init gives real error capture and alerting on top of the logs above — logs tell
-you what happened after you go looking; Sentry tells you *that* something broke without you
-looking. Wire it once logging exists. **Now unblocked** — the structured-logging half above is
-done, so this is the remaining Phase 5 piece; planned for its own branch (the `phase-5-logging`
-branch is deliberately logging-only). The init should be guarded by a `SENTRY_DSN` setting so
-it's a no-op locally and in tests. (Already noted in the docs.)
+**[code done; activation deferred] Sentry for error alerting** (`backend/app/main.py` startup
++ `run_graph`). ~~A ~two-line `sentry-sdk` init gives real error capture and alerting on top of
+the logs above — logs tell you what happened after you go looking; Sentry tells you *that*
+something broke without you looking.~~ **Code done** on the `phase-5-logging` branch (alongside
+the logging half — the branch ended up carrying both Phase 5 pieces). `sentry-sdk[fastapi]==2.19.2`
+init in `main.py`, **guarded by `if settings.sentry_dsn`** so it's a no-op until a DSN is set
+(verified: DSN unset → `get_client().is_active()` is False, and `capture_exception` is a safe
+no-op). The FastAPI integration auto-captures unhandled request exceptions; `run_graph` is a
+`BackgroundTask` that catches its own exceptions (to mark the job `failed`), so those never
+reach the integration — captured explicitly via `sentry_sdk.capture_exception()` in the
+`run_graph` outer `except`. `traces_sample_rate=0.0` (request/LLM tracing is Langfuse's job;
+Sentry is errors-only), events tagged with `ENVIRONMENT`. All 71 tests stayed green.
+
+  **Activation is deliberately deferred** (create a Sentry project, set `SENTRY_DSN` + confirm
+  `ENVIRONMENT=production` in Render): Lens is a no-real-users portfolio/demo app, so
+  alerting-when-nobody's-watching has little functional value, and the structured logs already
+  cover single-user forensics. The wired, correctly-designed integration is the portfolio
+  signal; turning it on is a two-minute config flip, not a code change. The three-layer
+  observability story — Langfuse (LLM traces) + structured logs (operational) + Sentry
+  (alerting) — is complete in code, with the last layer armed but not firing by choice.
+  (Already noted in the docs.)
 
 ---
 

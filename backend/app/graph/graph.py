@@ -4,6 +4,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import TypedDict
 
+import sentry_sdk
 from googleapiclient.discovery import build
 from langchain_core.messages import HumanMessage
 from langchain_google_genai import ChatGoogleGenerativeAI
@@ -698,6 +699,9 @@ async def run_graph(job_id: str, user_id: str, query: str) -> None:
                 await db.commit()
             except Exception:
                 log.exception("job.error", duration_s=round(time.perf_counter() - start, 2))
+                # Background task — this exception is handled here, so Sentry's request
+                # integration never sees it. Capture explicitly (no-op if DSN unset).
+                sentry_sdk.capture_exception()
                 await db.rollback()
                 job = await db.get(ResearchJob, uuid.UUID(job_id))
                 if job:

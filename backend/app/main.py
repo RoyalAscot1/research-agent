@@ -2,6 +2,7 @@ import os
 import time
 import uuid
 
+import sentry_sdk
 import structlog
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -14,6 +15,18 @@ from app.routers import history, jobs, queries, reports
 
 configure_logging()
 log = get_logger(__name__)
+
+# Error alerting. No-op unless SENTRY_DSN is set (local/test). The FastAPI integration
+# auto-captures unhandled request exceptions; background-task failures in run_graph are
+# captured explicitly there (they're caught, so they never reach the integration).
+# traces_sample_rate=0.0 — LLM/request tracing is Langfuse's job; Sentry is errors only.
+if settings.sentry_dsn:
+    sentry_sdk.init(
+        dsn=settings.sentry_dsn,
+        environment=settings.environment,
+        traces_sample_rate=0.0,
+    )
+    log.info("sentry.initialised", environment=settings.environment)
 
 if settings.langfuse_public_key:
     os.environ["LANGFUSE_PUBLIC_KEY"] = settings.langfuse_public_key

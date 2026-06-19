@@ -28,6 +28,10 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     environment: str = "development"
 
+    # Sentry error alerting. Off unless SENTRY_DSN is set, so local dev and tests are
+    # a no-op. `environment` (above) tags events so prod and local are distinguishable.
+    sentry_dsn: str | None = None
+
     @property
     def clerk_authorized_parties(self) -> list[str]:
         return [p.strip() for p in self.clerk_authorized_parties_raw.split(",")]
