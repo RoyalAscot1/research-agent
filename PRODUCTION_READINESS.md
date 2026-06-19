@@ -397,15 +397,21 @@ non-zero value would deadlock merges on a solo repo; the gate's teeth come from 
 the required status checks, not from a human approver. This makes "can't merge broken code"
 real, and since deploys fire from `main`, keeps broken code from deploying.
 
-**Render path-detection caveat (not a bug):** Render auto-deploy respects the service Root
-Directory (`backend/`) and **skips** a deploy when a push changes nothing under it — so the
-CI/docs-only merge (`ba1bfa8`) correctly produced no backend deploy (the running `/health` 200
-is the prior, byte-identical image). The deploy fires on the next push that actually touches
-`backend/`. Vercel builds the frontend on every push to `main`.
+**Render does NOT auto-deploy this service — deploys are manual (corrected 2026-06-19).** The
+earlier claim here — that Render skips deploys via Root-Directory path detection — was wrong.
+Per Render's docs, auto-deploy requires a linked GitHub/GitLab/Bitbucket *account*; a service
+connected via a **public Git repository URL or a prebuilt Docker image must be deployed
+manually**, and this backend is connected that way, so the "Auto-Deploy: On Commit" toggle is
+inert and no push/merge ever triggers a build. This was caught when the entire Phase-5 logging
+PR (and everything merged since PR #23) silently never shipped — the live container sat on the
+last *manually* deployed commit while CI was green and PRs were merged. **Verify the live commit
+SHA in Render → Events after every backend merge**, and ship with **Manual Deploy → "Clear build
+cache & deploy."** Vercel *does* auto-deploy the frontend (linked-account connection).
 
-**Still optional (Phase 4 polish, not required):** gate the Render deploy behind CI via a
-Render deploy-hook called from a `main`-only workflow job, instead of Render's default
-auto-deploy-on-push. Minimum CD already exists (Render + Vercel both auto-deploy from `main`).
+**Still optional (Phase 4 polish, not required) — and now the real fix for the manual-deploy
+problem above:** a `main`-only workflow job that `curl`s Render's **Deploy Hook** URL. A deploy
+hook triggers a build regardless of connection mode, so it both automates Render *and* gates the
+deploy behind CI. Vercel already auto-deploys from `main`; this closes the gap for Render.
 
 Note the workflow runs on `pull_request` using the file from the PR head branch, so it
 exercised itself on the very first PR even before `ci.yml` existed on `main`; now that it's
