@@ -490,6 +490,18 @@ Sentry is errors-only), events tagged with `ENVIRONMENT`. All 71 tests stayed gr
 
 *Goal: the most-read file tells the story.*
 
+**[done] Real root `README.md` written** (`README.md`), following the structure below: pitch +
+CI badge, two screenshots (prompt + report) under the intro, *What it does*, *The agent* (with a
+Mermaid graph diagram + the hard-cap cost story), *Architecture* (Mermaid topology diagram),
+*Tech stack* (compact table linking to `app_summary.md`, not duplicating it), *Running locally*
+(backend + frontend + a brief tests/CI line), *Observability* (the Langfuse + structlog + Sentry
+three-layer story), and *Production considerations* (pointing here, framing the v2 deferrals as
+deliberate). Two deviations from the prep below: the **live demo link was dropped** (the recorded
+screenshots carry the proof instead), and **static screenshots replaced the GIF** (`docs/prompt.png`,
+`docs/report.png`). **The stale `frontend/README.md` was deleted** (was untouched `create-next-app`
+boilerplate referencing the Geist font; the app uses Space Grotesk). Original prep notes retained
+below for reference.
+
 **Write a real root `README.md`** (currently a 2-line stub). For a portfolio/showcase
 project this is the single most-read file — it carries the "production-grade considerations"
 story more than any individual code fix. It should also link to this doc, since a curated
