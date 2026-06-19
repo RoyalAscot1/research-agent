@@ -21,6 +21,17 @@ class Settings(BaseSettings):
     # suite isn't throttled (the one 429 test re-enables it locally).
     rate_limit_enabled: bool = True
 
+    # Structured logging. `log_level` gates verbosity (DEBUG surfaces the expected
+    # comments-disabled skips); `environment` tags every line so prod and local are
+    # distinguishable in the Render log stream. Both optional with safe defaults so
+    # tests and local dev need no new env vars.
+    log_level: str = "INFO"
+    environment: str = "development"
+
+    # Sentry error alerting. Off unless SENTRY_DSN is set, so local dev and tests are
+    # a no-op. `environment` (above) tags events so prod and local are distinguishable.
+    sentry_dsn: str | None = None
+
     @property
     def clerk_authorized_parties(self) -> list[str]:
         return [p.strip() for p in self.clerk_authorized_parties_raw.split(",")]

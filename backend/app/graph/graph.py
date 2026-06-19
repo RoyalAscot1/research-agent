@@ -1,8 +1,10 @@
 import asyncio
+import time
 import uuid
 from datetime import datetime, timezone
 from typing import TypedDict
 
+import sentry_sdk
 from googleapiclient.discovery import build
 from langchain_core.messages import HumanMessage
 from langchain_google_genai import ChatGoogleGenerativeAI
@@ -14,7 +16,10 @@ from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 
 from app.config import settings
 from app.database import AsyncSessionLocal
+from app.logging_config import bind_job_id, clear_log_context, get_logger
 from app.models.models import Report, ResearchJob
+
+log = get_logger(__name__)
 
 # Hard ceiling on any single Gemini request. Without it a hung LLM call leaves
 # the LangGraph run (and its `research_jobs` row) stuck in `running` forever —
@@ -240,6 +245,11 @@ async def planner_node(state: GraphState) -> GraphState:
             llm.ainvoke([HumanMessage(content=prompt)]),
             timeout=_LLM_REQUEST_TIMEOUT_SECONDS,
         )
+        log.info(
+            "planner.complete",
+            search_queries=len(plan.search_queries),
+            run_sentiment=plan.run_sentiment,
+        )
         return {
             **state,
             "search_queries": plan.search_queries,
@@ -248,6 +258,7 @@ async def planner_node(state: GraphState) -> GraphState:
         }
     except Exception:
         # Fall back to using the raw query as a single search and skipping sentiment
+        log.warning("planner.fallback", exc_info=True)
         return {
             **state,
             "search_queries": [state["query"]],
@@ -293,9 +304,16 @@ async def researcher_node(state: GraphState) -> GraphState:
                     if url and url not in seen_urls:
                         seen_urls.add(url)
                         merged.append(result)
-            except Exception:
-                pass  # this sub-query failed — keep going with what we have
+            except Exception as exc:
+                # this sub-query failed — keep going with what we have
+                log.warning("tavily.search_failed", query=q, error=str(exc))
 
+        log.info(
+            "researcher.complete",
+            sources=len(merged),
+            tavily_calls=call_count,
+            iteration=state.get("iteration_count", 0) + 1,
+        )
         return {
             **state,
             "sources": merged,
@@ -307,6 +325,7 @@ async def researcher_node(state: GraphState) -> GraphState:
     except Exception:
         # Non-fatal: proceed without sources — no queries were actually attempted
         # (the failure happened before the loop, e.g. TavilyClient construction)
+        log.warning("researcher.failed", exc_info=True)
         return {
             **state,
             "sources": state.get("sources") or [],
@@ -360,6 +379,13 @@ async def coverage_check_node(state: GraphState) -> GraphState:
     tavily_call_count = state.get("tavily_call_count", 0)
 
     if iteration_count >= 3 or tavily_call_count >= 5:
+        log.info(
+            "coverage.decision",
+            sufficient=True,
+            reason="hard_cap",
+            iteration=iteration_count,
+            tavily_calls=tavily_call_count,
+        )
         return {**state, "coverage_sufficient": True}
 
     llm = ChatGoogleGenerativeAI(
@@ -386,7 +412,17 @@ async def coverage_check_node(state: GraphState) -> GraphState:
             timeout=_LLM_REQUEST_TIMEOUT_SECONDS,
         )
         if assessment.sufficient or not assessment.additional_queries:
+            log.info(
+                "coverage.decision", sufficient=True, reason="model", iteration=iteration_count
+            )
             return {**state, "coverage_sufficient": True}
+        log.info(
+            "coverage.decision",
+            sufficient=False,
+            reason="model",
+            iteration=iteration_count,
+            additional_queries=len(assessment.additional_queries[:2]),
+        )
         return {
             **state,
             "coverage_sufficient": False,
@@ -394,6 +430,7 @@ async def coverage_check_node(state: GraphState) -> GraphState:
         }
     except Exception:
         # Fail safe — an unreliable signal shouldn't keep the loop spinning
+        log.warning("coverage.check_failed", exc_info=True)
         return {**state, "coverage_sufficient": True}
 
 
@@ -449,8 +486,9 @@ async def sentiment_node(state: GraphState) -> GraphState:
                     text = item["snippet"]["topLevelComment"]["snippet"].get("textDisplay", "")
                     if text:
                         comments.append(text)
-            except Exception:
-                # Comments may be disabled on some videos — skip silently
+            except Exception as exc:
+                # Comments may be disabled on some videos — expected, so debug not warning
+                log.debug("youtube.comments_skipped", video_id=video_id, error=str(exc))
                 continue
 
         if not comments:
@@ -477,6 +515,7 @@ async def sentiment_node(state: GraphState) -> GraphState:
             "negative": round(neg / total, 4),
         }
 
+        log.info("sentiment.complete", comments_analysed=total, videos=len(video_ids))
         return {
             **state,
             "sentiment_scores": sentiment_scores,
@@ -485,6 +524,7 @@ async def sentiment_node(state: GraphState) -> GraphState:
 
     except Exception:
         # Non-fatal: proceed without sentiment
+        log.warning("sentiment.failed", exc_info=True)
         return {**state, "sentiment_scores": None, "sentiment_volume": None}
 
 
@@ -524,17 +564,20 @@ async def synthesizer_node(state: GraphState) -> GraphState:
             # A blank report with no exception would otherwise be persisted and
             # marked `done` (run_graph treats a falsy error as success), leaving
             # the user with an empty report. Flip it to a failure instead.
+            log.warning("synthesizer.empty_report")
             return {
                 **state,
                 "report_markdown": None,
                 "error": "Synthesizer produced an empty report",
             }
+        log.info("synthesizer.complete", report_chars=len(content))
         return {**state, "report_markdown": content, "error": None}
     except Exception as exc:
         # str(exc) is empty for some exceptions (notably asyncio.TimeoutError),
         # and run_graph treats a falsy error as success — fall back to the class
         # name so a timeout reliably flips the job to `failed` instead of
         # persisting a null report.
+        log.exception("synthesizer.failed")
         return {**state, "report_markdown": None, "error": str(exc) or type(exc).__name__}
 
 
@@ -584,67 +627,86 @@ _graph = _build_graph()
 
 @observe()
 async def run_graph(job_id: str, user_id: str, query: str) -> None:
-    async with AsyncSessionLocal() as db:
-        job = await db.get(ResearchJob, uuid.UUID(job_id))
-        if not job:
-            return
-
-        job.status = "running"
-        await db.commit()
-
-        try:
-            state = await _graph.ainvoke(
-                {
-                    "job_id": job_id,
-                    "user_id": user_id,
-                    "query": query,
-                    "search_queries": None,
-                    "run_sentiment": None,
-                    "youtube_search_query": None,
-                    "sources": None,
-                    "sentiment_scores": None,
-                    "sentiment_volume": None,
-                    "report_markdown": None,
-                    "error": None,
-                    "tavily_call_count": 0,
-                    "iteration_count": 0,
-                    "coverage_sufficient": None,
-                    "tried_queries": [],
-                }
-            )
-
-            now = datetime.now(timezone.utc)
-            if state["error"]:
-                job.status = "failed"
-                job.completed_at = now
-            else:
-                sources = state.get("sources") or []
-                scores = state.get("sentiment_scores")
-                volume = state.get("sentiment_volume")
-
-                db.add(
-                    Report(
-                        id=uuid.uuid4(),
-                        job_id=uuid.UUID(job_id),
-                        user_id=uuid.UUID(user_id),
-                        report_markdown=state["report_markdown"],
-                        raw_context=sources,
-                        source_count=len(sources),
-                        sentiment_positive=scores["positive"] if scores else None,
-                        sentiment_neutral=scores["neutral"] if scores else None,
-                        sentiment_negative=scores["negative"] if scores else None,
-                        youtube_comment_volume=volume,
-                        overall_sentiment=_derive_overall_sentiment(scores),
-                    )
-                )
-                job.status = "done"
-                job.completed_at = now
-
-            await db.commit()
-        except Exception:
-            await db.rollback()
+    bind_job_id(job_id)
+    start = time.perf_counter()
+    try:
+        async with AsyncSessionLocal() as db:
             job = await db.get(ResearchJob, uuid.UUID(job_id))
-            if job:
-                job.status = "failed"
-                job.completed_at = datetime.now(timezone.utc)
+            if not job:
+                log.warning("job.not_found")
+                return
+
+            job.status = "running"
+            await db.commit()
+            log.info("job.started", user_id=user_id, query=query)
+
+            try:
+                state = await _graph.ainvoke(
+                    {
+                        "job_id": job_id,
+                        "user_id": user_id,
+                        "query": query,
+                        "search_queries": None,
+                        "run_sentiment": None,
+                        "youtube_search_query": None,
+                        "sources": None,
+                        "sentiment_scores": None,
+                        "sentiment_volume": None,
+                        "report_markdown": None,
+                        "error": None,
+                        "tavily_call_count": 0,
+                        "iteration_count": 0,
+                        "coverage_sufficient": None,
+                        "tried_queries": [],
+                    }
+                )
+
+                now = datetime.now(timezone.utc)
+                duration_s = round(time.perf_counter() - start, 2)
+                if state["error"]:
+                    job.status = "failed"
+                    job.completed_at = now
+                    log.warning("job.failed", error=state["error"], duration_s=duration_s)
+                else:
+                    sources = state.get("sources") or []
+                    scores = state.get("sentiment_scores")
+                    volume = state.get("sentiment_volume")
+
+                    db.add(
+                        Report(
+                            id=uuid.uuid4(),
+                            job_id=uuid.UUID(job_id),
+                            user_id=uuid.UUID(user_id),
+                            report_markdown=state["report_markdown"],
+                            raw_context=sources,
+                            source_count=len(sources),
+                            sentiment_positive=scores["positive"] if scores else None,
+                            sentiment_neutral=scores["neutral"] if scores else None,
+                            sentiment_negative=scores["negative"] if scores else None,
+                            youtube_comment_volume=volume,
+                            overall_sentiment=_derive_overall_sentiment(scores),
+                        )
+                    )
+                    job.status = "done"
+                    job.completed_at = now
+                    log.info(
+                        "job.done",
+                        duration_s=duration_s,
+                        source_count=len(sources),
+                        has_sentiment=scores is not None,
+                    )
+
                 await db.commit()
+            except Exception:
+                log.exception("job.error", duration_s=round(time.perf_counter() - start, 2))
+                # Background task — this exception is handled here, so Sentry's request
+                # integration never sees it. Capture explicitly (no-op if DSN unset).
+                sentry_sdk.capture_exception()
+                await db.rollback()
+                job = await db.get(ResearchJob, uuid.UUID(job_id))
+                if job:
+                    job.status = "failed"
+                    job.completed_at = datetime.now(timezone.utc)
+                    await db.commit()
+    finally:
+        clear_log_context()

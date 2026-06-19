@@ -9,10 +9,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.auth import get_current_user
 from app.database import get_db
 from app.graph.graph import call_gemini_followup
+from app.logging_config import get_logger
 from app.models.models import FollowUp, Report, ResearchJob, User
 from app.rate_limit import FOLLOWUP_LIMIT, limiter
 
 router = APIRouter(tags=["reports"])
+log = get_logger(__name__)
 
 
 class FollowUpRequest(BaseModel):
@@ -105,6 +107,7 @@ async def create_followup(
     count_result = await db.execute(select(func.count()).where(FollowUp.report_id == report.id))
     existing_count = count_result.scalar_one()
     if existing_count >= 5:
+        log.info("followup.cap_reached", report_id=str(report.id), user_id=str(current_user.id))
         raise HTTPException(status_code=429, detail="Follow-up limit reached (5 max)")
 
     # Load job for original query
@@ -146,9 +149,11 @@ async def create_followup(
         # A concurrent follow-up claimed this turn_number first — the
         # uq_follow_ups_report_turn constraint rejected the duplicate insert.
         await db.rollback()
+        log.warning("followup.conflict", report_id=str(report.id), turn_number=turn_number)
         raise HTTPException(
             status_code=409,
             detail="A concurrent follow-up was submitted — please retry.",
         ) from None
 
+    log.info("followup.created", report_id=str(report.id), turn_number=turn_number)
     return {"answer": answer, "turn_number": turn_number}
