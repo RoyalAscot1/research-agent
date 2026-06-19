@@ -68,11 +68,23 @@ def configure_logging() -> None:
     root.handlers = [handler]
     root.setLevel(level)
 
-    # uvicorn installs its own handlers; clear them so lines aren't double-emitted.
-    for name in ("uvicorn", "uvicorn.error", "uvicorn.access"):
+    # uvicorn installs its own handlers; clear them so its startup/error lines route
+    # through our JSON handler (propagate to root) instead of uvicorn's plain formatter.
+    for name in ("uvicorn", "uvicorn.error"):
         lg = logging.getLogger(name)
         lg.handlers = []
         lg.propagate = True
+
+    # Silence uvicorn's access logger entirely. The request_logging_middleware already
+    # emits a richer `request.complete` line per request, so the access log is pure
+    # duplication. We disable it HERE rather than relying on uvicorn's --no-access-log
+    # flag: configure_logging() runs AFTER uvicorn's own logging setup, and if we let
+    # uvicorn.access propagate to our root handler its records resurface as JSON even
+    # when --no-access-log is set (the flag and propagation fight; propagation wins).
+    access_logger = logging.getLogger("uvicorn.access")
+    access_logger.handlers = []
+    access_logger.propagate = False
+    access_logger.disabled = True
 
 
 def get_logger(name: str | None = None) -> structlog.stdlib.BoundLogger:
